@@ -596,7 +596,7 @@ async function mountMeeting(room, isPrivate, joinOptions) {
       parentNode: document.querySelector("#jitsiMount"),
       width: "100%",
       height: "100%",
-      userInfo: { displayName:state.profile.display_name, email:state.user.email },
+      userInfo: { displayName:state.profile.display_name },
       configOverwrite: {
         prejoinPageEnabled: false,
         startWithAudioMuted: !options.microphone,
