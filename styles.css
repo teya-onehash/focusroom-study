@@ -184,6 +184,7 @@ h1, h2, h3 { line-height: 1.08; letter-spacing: -.035em; }
 .count small { display:block; color:var(--muted); font-weight:500; }
 
 .pricing-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; align-items:stretch; }
+.pricing-grid.pricing-four { grid-template-columns:repeat(4,1fr); }
 .price-card { position:relative; display:flex; flex-direction:column; }
 .price-card.popular { border-color:rgba(141,124,255,.75); transform:translateY(-10px); background:linear-gradient(155deg,rgba(141,124,255,.18),var(--panel)); }
 .popular-tag { position:absolute; top:-13px; left:50%; transform:translateX(-50%); padding:5px 12px; border-radius:999px; background:var(--violet); font-size:11px; font-weight:850; text-transform:uppercase; letter-spacing:.08em; white-space:nowrap; }
@@ -193,6 +194,9 @@ h1, h2, h3 { line-height: 1.08; letter-spacing: -.035em; }
 .perk-list li::before { content:"✓"; color:var(--mint); margin-right:9px; }
 .price-card .btn { margin-top:auto; }
 .apple-pay { display:inline-flex; align-items:center; gap:7px; color:var(--muted); font-size:12px; margin-top:12px; justify-content:center; }
+.annual-note { min-height:49px; margin:-2px 0 7px; padding:9px 11px; border-radius:12px; background:rgba(101,223,177,.08); color:var(--muted); font-size:11px; }
+.annual-note strong { display:block; color:var(--mint); font-size:13px; }
+.annual-button { margin-top:8px !important; }
 
 .blog-card { min-height:260px; display:flex; flex-direction:column; cursor:pointer; transition:.22s ease; }
 .blog-card:hover { transform:translateY(-5px); border-color:rgba(141,124,255,.38); }
@@ -426,7 +430,7 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
 @media (max-width: 980px) {
   .hero { grid-template-columns:1fr; padding-top:48px; }
   .hero-visual { min-height:420px; }
-  .bento, .grid-3, .pricing-grid { grid-template-columns:1fr 1fr; }
+  .bento, .grid-3, .pricing-grid, .pricing-grid.pricing-four { grid-template-columns:1fr 1fr; }
   .price-card.popular { transform:none; }
   .stat-grid { grid-template-columns:1fr 1fr; }
   .dashboard-grid { grid-template-columns:1fr; }
@@ -444,7 +448,7 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
   .hero-visual { min-height:360px; }
   .section { width:min(100% - 28px,1200px); padding:68px 0; }
   .section-head { display:block; }
-  .bento, .grid-3, .pricing-grid, .room-grid { grid-template-columns:1fr; }
+  .bento, .grid-3, .pricing-grid, .pricing-grid.pricing-four, .room-grid { grid-template-columns:1fr; }
   .footer { display:block; }
   .app-layout { display:block; }
   .sidebar { transform:translateX(-100%); transition:.25s; width:270px; }
