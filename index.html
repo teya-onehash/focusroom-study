@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b12">
+  <meta name="description" content="FocusRoom is a calm virtual coworking space for focused study sessions, daily goals, and shared momentum.">
+  <title>FocusRoom — Study together, quietly</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%235d5fef'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='white' stroke-width='6' stroke-dasharray='82 32' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='32' r='4' fill='white'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #090b12;
+      --panel: #10131d;
+      --panel-2: #161a27;
+      --panel-3: #1c2131;
+      --text: #f7f7fb;
+      --muted: #969caf;
+      --line: rgba(255,255,255,.09);
+      --brand: #7778ff;
+      --brand-2: #50d8c8;
+      --danger: #ff6b7a;
+      --warning: #ffca69;
+      --shadow: 0 22px 65px rgba(0,0,0,.35);
+    }
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      overflow-x: hidden;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 50% -10%, rgba(119,120,255,.15), transparent 32rem),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible {
+      outline: 3px solid rgba(119,120,255,.42);
+      outline-offset: 2px;
+    }
+    .app {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 260px minmax(0,1fr) 320px;
+      grid-template-rows: 72px minmax(0,1fr);
+    }
+    .topbar {
+      grid-column: 1 / -1;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(9,11,18,.78);
+      backdrop-filter: blur(18px);
+      position: sticky;
+      top: 0;
+    }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 800; letter-spacing: -.04em; font-size: 1.18rem; }
+    .brand-mark {
+      width: 34px; height: 34px; border-radius: 11px; position: relative;
+      background: linear-gradient(145deg, #8e8fff, #5b5de9);
+      box-shadow: 0 8px 24px rgba(105,107,244,.34);
+    }
+    .brand-mark::before {
+      content: ""; position: absolute; inset: 8px; border: 3px solid white; border-radius: 50%;
+      border-right-color: transparent;
+    }
+    .top-center {
+      display: flex; align-items: center; gap: 10px; color: var(--muted);
+      font-size: .88rem;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #58e5a0; box-shadow: 0 0 0 4px rgba(88,229,160,.1); }
+    .profile {
+      display: flex; align-items: center; gap: 10px; border: 0; background: transparent; cursor: pointer;
+    }
+    .avatar-mini {
+      width: 36px; height: 36px; display: grid; place-items: center; border-radius: 12px;
+      background: linear-gradient(145deg, #ffd49a, #f18a78); color: #35170e; font-weight: 800;
+    }
+    .sidebar, .goals {
+      min-height: 0;
+      padding: 22px 18px;
+      background: rgba(16,19,29,.72);
+    }
+    .sidebar { border-right: 1px solid var(--line); }
+    .goals { border-left: 1px solid var(--line); overflow-y: auto; }
+    .eyebrow {
+      color: #747b92; font-size: .74rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+      margin: 0 8px 12px;
+    }
+    .room-list { display: grid; gap: 8px; }
+    .room-card {
+      width: 100%; display: grid; grid-template-columns: 38px minmax(0,1fr) auto; align-items: center;
+      gap: 11px; padding: 10px; border: 1px solid transparent; border-radius: 14px;
+      background: transparent; text-align: left; cursor: pointer; transition: .2s ease;
+    }
+    .room-card:hover { background: rgba(255,255,255,.04); }
+    .room-card.active { background: rgba(119,120,255,.12); border-color: rgba(119,120,255,.28); }
+    .room-icon {
+      width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+      font-size: 1rem; background: var(--room-color, #262b3b);
+    }
+    .room-copy { min-width: 0; }
+    .room-name { display: block; font-size: .91rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .room-meta { display: block; color: var(--muted); font-size: .77rem; margin-top: 1px; }
+    .count { color: #bbc0d0; font-size: .76rem; }
+    .sidebar-bottom {
+      margin-top: 24px; padding: 16px; border: 1px solid var(--line); border-radius: 16px;
+      background: linear-gradient(145deg, rgba(119,120,255,.12), rgba(80,216,200,.06));
+    }
+    .sidebar-bottom strong { display: block; font-size: .92rem; margin-bottom: 4px; }
+    .sidebar-bottom p { margin: 0; color: var(--muted); font-size: .79rem; }
+    .main {
+      min-width: 0; min-height: 0; padding: 24px; display: flex; flex-direction: column; gap: 18px;
+      overflow-y: auto;
+    }
+    .room-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+    .room-title-wrap { display: flex; gap: 12px; align-items: center; }
+    .room-badge {
+      width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
+      background: linear-gradient(145deg, rgba(119,120,255,.27), rgba(80,216,200,.12));
+      border: 1px solid rgba(119,120,255,.25);
+    }
+    h1 { margin: 0; font-size: clamp(1.2rem, 2vw, 1.55rem); letter-spacing: -.035em; line-height: 1.2; }
+    .room-subtitle { margin: 4px 0 0; color: var(--muted); font-size: .88rem; }
+    .session-pill {
+      border: 1px solid rgba(88,229,160,.23); background: rgba(88,229,160,.08); color: #a9f5ce;
+      border-radius: 999px; padding: 8px 12px; font-size: .8rem; white-space: nowrap;
+    }
+    .stage {
+      position: relative; flex: 1; min-height: 460px; display: grid; grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr; gap: 12px;
+    }
+    .study-tile {
+      min-height: 210px; overflow: hidden; position: relative; border: 1px solid var(--line); border-radius: 20px;
+      background: var(--tile, linear-gradient(145deg,#1f2940,#111621));
+      box-shadow: inset 0 1px rgba(255,255,255,.04);
+    }
+    .study-tile::after {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(to top, rgba(4,5,10,.72), transparent 55%);
+    }
+    .tile-orb {
+      position: absolute; width: 190px; height: 190px; border-radius: 50%; filter: blur(3px);
+      top: 50%; left: 50%; transform: translate(-50%,-47%);
+      background: radial-gradient(circle at 36% 28%, var(--orb-light,#ffd0a2), var(--orb,#b86d64) 55%, rgba(0,0,0,.14) 70%);
+      opacity: .78;
+    }
+    .tile-orb::before {
+      content: ""; position: absolute; width: 72px; height: 72px; border-radius: 50%;
+      left: 59px; top: 30px; background: rgba(255,255,255,.18);
+    }
+    .tile-orb::after {
+      content: ""; position: absolute; width: 130px; height: 72px; border-radius: 70px 70px 20px 20px;
+      left: 30px; top: 102px; background: rgba(255,255,255,.13);
+    }
+    .tile-info {
+      position: absolute; z-index: 2; left: 16px; right: 16px; bottom: 14px;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    }
+    .person { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: .88rem; }
+    .person-state { color: #d7dae5; font-size: .76rem; font-weight: 500; }
+    .mic-state {
+      width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+      background: rgba(4,5,10,.48); color: #b9becf;
+    }
+    .you-tile { background: linear-gradient(145deg, #171b28, #0d1018); }
+    .you-placeholder { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--muted); }
+    .you-placeholder .initial {
+      width: 76px; height: 76px; border-radius: 25px; display: grid; place-items: center; margin: auto auto 12px;
+      color: #252047; font-size: 1.55rem; font-weight: 850; background: linear-gradient(145deg,#d5ceff,#9692ff);
+    }
+    .you-placeholder p { margin: 0; font-size: .84rem; }
+    .controls {
+      align-self: center; display: flex; align-items: center; gap: 9px; padding: 8px;
+      border: 1px solid var(--line); border-radius: 18px; background: rgba(16,19,29,.92);
+      box-shadow: var(--shadow); position: sticky; bottom: 12px; z-index: 6;
+    }
+    .control {
+      width: 44px; height: 44px; border: 0; border-radius: 13px; background: var(--panel-3);
+      display: grid; place-items: center; cursor: pointer; transition: .18s ease;
+    }
+    .control:hover { transform: translateY(-2px); background: #272d41; }
+    .control.active { background: rgba(119,120,255,.2); color: #c9c9ff; }
+    .control.danger { background: rgba(255,107,122,.13); color: #ff9ca6; }
+    .control svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; }
+    .timer-panel {
+      padding: 18px; border: 1px solid var(--line); border-radius: 20px;
+      background: linear-gradient(160deg, rgba(119,120,255,.11), rgba(22,26,39,.9) 42%);
+      box-shadow: inset 0 1px rgba(255,255,255,.04);
+    }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .panel-head h2 { margin: 0; font-size: 1rem; letter-spacing: -.02em; }
+    .mode-tabs { display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: rgba(0,0,0,.22); }
+    .mode-tab {
+      border: 0; border-radius: 8px; background: transparent; color: var(--muted); padding: 5px 9px; font-size: .75rem; cursor: pointer;
+    }
+    .mode-tab.active { color: var(--text); background: rgba(255,255,255,.09); }
+    .timer-face {
+      width: 174px; height: 174px; margin: 20px auto 16px; border-radius: 50%; position: relative; display: grid; place-items: center;
+      background: conic-gradient(var(--brand) var(--progress,0%), rgba(255,255,255,.07) 0);
+      box-shadow: 0 0 48px rgba(119,120,255,.13);
+    }
+    .timer-face::before {
+      content: ""; position: absolute; inset: 9px; border-radius: 50%; background: #121622;
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .timer-copy { z-index: 1; text-align: center; }
+    .time { display: block; font-size: 2.28rem; font-weight: 800; letter-spacing: -.07em; line-height: 1; font-variant-numeric: tabular-nums; }
+    .timer-label { color: var(--muted); font-size: .73rem; }
+    .timer-actions { display: flex; justify-content: center; gap: 8px; }
+    .primary, .secondary {
+      border: 0; border-radius: 12px; padding: 10px 15px; font-weight: 750; cursor: pointer;
+    }
+    .primary { background: var(--brand); color: white; box-shadow: 0 8px 22px rgba(119,120,255,.25); }
+    .primary:hover { background: #8889ff; }
+    .secondary { background: var(--panel-3); color: #c3c7d5; }
+    .sound-panel, .tasks-panel { margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: rgba(22,26,39,.62); }
+    .sound-options { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; margin-top: 12px; }
+    .sound {
+      border: 1px solid transparent; background: var(--panel-3); color: var(--muted); border-radius: 12px;
+      padding: 9px 5px; font-size: .78rem; cursor: pointer;
+    }
+    .sound.active { color: #d4d4ff; border-color: rgba(119,120,255,.35); background: rgba(119,120,255,.12); }
+    .volume-row { margin-top: 12px; display: flex; align-items: center; gap: 10px; color: var(--muted); }
+    input[type="range"] { width: 100%; accent-color: var(--brand); }
+    .progress-block { margin: 14px 0 18px; }
+    .progress-copy { display: flex; justify-content: space-between; color: var(--muted); font-size: .79rem; margin-bottom: 7px; }
+    .progress-bar { height: 8px; background: rgba(255,255,255,.07); border-radius: 999px; overflow: hidden; }
+    .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg,var(--brand),var(--brand-2)); border-radius: inherit; transition: width .3s ease; }
+    .task-form { display: flex; gap: 8px; margin: 12px 0 14px; }
+    .task-form input {
+      min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: 12px;
+      padding: 10px 11px; background: rgba(0,0,0,.18); color: var(--text);
+    }
+    .task-form input::placeholder { color: #71778b; }
+    .add-task {
+      flex: 0 0 42px; border: 0; border-radius: 12px; font-size: 1.35rem; background: var(--brand); color: white; cursor: pointer;
+    }
+    .task-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 7px; }
+    .task-item {
+      display: grid; grid-template-columns: 22px minmax(0,1fr) 28px; align-items: center; gap: 8px;
+      padding: 9px 6px; border-radius: 10px;
+    }
+    .task-item:hover { background: rgba(255,255,255,.025); }
+    .check {
+      width: 20px; height: 20px; border: 1px solid #4e5569; border-radius: 7px; background: transparent; cursor: pointer;
+      display: grid; place-items: center; color: #11151f;
+    }
+    .task-item.done .check { background: var(--brand-2); border-color: var(--brand-2); }
+    .task-item.done .task-text { text-decoration: line-through; color: #686f82; }
+    .task-text { font-size: .87rem; overflow-wrap: anywhere; }
+    .remove { border: 0; background: transparent; color: #6f7587; cursor: pointer; font-size: 1.1rem; border-radius: 7px; }
+    .remove:hover { color: var(--danger); }
+    .small-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 18px; }
+    .stat { padding: 12px; border-radius: 14px; background: rgba(255,255,255,.035); border: 1px solid var(--line); }
+    .stat strong { display: block; font-size: 1.2rem; letter-spacing: -.04em; }
+    .stat span { color: var(--muted); font-size: .72rem; }
+    .mobile-rooms { display: none; }
+    .toast {
+      position: fixed; left: 50%; bottom: 26px; z-index: 30; transform: translate(-50%,25px);
+      padding: 11px 15px; border: 1px solid var(--line); border-radius: 12px;
+      background: #23283a; color: white; box-shadow: var(--shadow); opacity: 0; pointer-events: none; transition: .25s ease;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%,0); }
+    @media (max-width: 1100px) {
+      .app { grid-template-columns: 220px minmax(0,1fr); }
+      .goals { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .timer-panel, .tasks-panel { margin: 0; }
+      .small-stats { display: none; }
+    }
+    @media (max-width: 760px) {
+      .app { display: block; }
+      .topbar { height: 64px; padding: 0 16px; }
+      .top-center, .profile span { display: none; }
+      .sidebar { display: none; }
+      .main { padding: 16px; overflow: visible; }
+      .mobile-rooms { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+      .mobile-rooms::-webkit-scrollbar { display: none; }
+      .mobile-room { white-space: nowrap; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); color: var(--muted); padding: 8px 12px; }
+      .mobile-room.active { border-color: rgba(119,120,255,.4); background: rgba(119,120,255,.13); color: var(--text); }
+      .room-head { align-items: center; }
+      .session-pill { display: none; }
+      .stage { min-height: 560px; grid-template-columns: 1fr; grid-template-rows: repeat(4,minmax(132px,1fr)); }
+      .study-tile { min-height: 132px; }
+      .tile-orb { width: 130px; height: 130px; }
+      .tile-orb::before { width: 50px; height: 50px; left: 40px; top: 20px; }
+      .tile-orb::after { width: 90px; height: 48px; left: 20px; top: 70px; }
+      .controls { bottom: 10px; }
+      .goals { display: block; border-top: 1px solid var(--line); padding: 16px; }
+      .tasks-panel { margin-top: 16px; }
+    }
+    @media (max-width: 420px) {
+      .room-subtitle { display: none; }
+      .control { width: 42px; height: 42px; }
+      .controls { gap: 6px; }
+      .timer-face { width: 160px; height: 160px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>FocusRoom</div>
+      <div class="top-center"><span class="status-dot"></span><span id="communityCount">1,284 students focusing now</span></div>
+      <button class="profile" aria-label="Open profile"><span class="avatar-mini">T</span><span>Tenzing</span></button>
+    </header>
+
+    <aside class="sidebar" aria-label="Study rooms">
+      <p class="eyebrow">Live rooms</p>
+      <div class="room-list" id="roomList">
+        <button class="room-card active" data-room="Deep Focus" data-members="148" data-icon="◎">
+          <span class="room-icon" style="--room-color:rgba(119,120,255,.18)">◎</span>
+          <span class="room-copy"><span class="room-name">Deep Focus</span><span class="room-meta">50 min sessions</span></span>
+          <span class="count">148</span>
+        </button>
+        <button class="room-card" data-room="Quiet Library" data-members="93" data-icon="▤">
+          <span class="room-icon" style="--room-color:rgba(80,216,200,.14)">▤</span>
+          <span class="room-copy"><span class="room-name">Quiet Library</span><span class="room-meta">No talking</span></span>
+          <span class="count">93</span>
+        </button>
+        <button class="room-card" data-room="Late Night" data-members="61" data-icon="☾">
+          <span class="room-icon" style="--room-color:rgba(120,94,195,.18)">☾</span>
+          <span class="room-copy"><span class="room-name">Late Night</span><span class="room-meta">Open all night</span></span>
+          <span class="count">61</span>
+        </button>
+        <button class="room-card" data-room="Exam Prep" data-members="76" data-icon="✦">
+          <span class="room-icon" style="--room-color:rgba(255,202,105,.14)">✦</span>
+          <span class="room-copy"><span class="room-name">Exam Prep</span><span class="room-meta">High intensity</span></span>
+          <span class="count">76</span>
+        </button>
+      </div>
+      <div class="sidebar-bottom">
+        <strong>Keep the momentum</strong>
+        <p>Your presence helps everyone in the room stay accountable.</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="mobile-rooms" id="mobileRooms" aria-label="Choose a study room">
+        <button class="mobile-room active" data-room="Deep Focus">◎ Deep Focus</button>
+        <button class="mobile-room" data-room="Quiet Library">▤ Quiet Library</button>
+        <button class="mobile-room" data-room="Late Night">☾ Late Night</button>
+        <button class="mobile-room" data-room="Exam Prep">✦ Exam Prep</button>
+      </div>
+      <section class="room-head" aria-labelledby="roomTitle">
+        <div class="room-title-wrap">
+          <div class="room-badge" id="roomBadge">◎</div>
+          <div><h1 id="roomTitle">Deep Focus</h1><p class="room-subtitle" id="roomSubtitle">148 people · stay muted · cameras optional</p></div>
+        </div>
+        <div class="session-pill" id="sessionPill">● Room is active</div>
+      </section>
+
+      <section class="stage" aria-label="Virtual study room">
+        <article class="study-tile" style="--tile:linear-gradient(145deg,#253042,#111823);--orb:#cf806a;--orb-light:#ffd7a8">
+          <div class="tile-orb"></div><div class="tile-info"><div><span class="person">Maya <span class="person-state">• Calculus</span></span></div><span class="mic-state" title="Microphone muted">⌁</span></div>
+        </article>
+        <article class="study-tile" style="--tile:linear-gradient(145deg,#263338,#11191b);--orb:#779c85;--orb-light:#c4e6bd">
+          <div class="tile-orb"></div><div class="tile-info"><div><span class="person">Jordan <span class="person-state">• Algorithms</span></span></div><span class="mic-state" title="Microphone muted">⌁</span></div>
+        </article>
+        <article class="study-tile" style="--tile:linear-gradient(145deg,#302a43,#151320);--orb:#9a79bb;--orb-light:#dbc2ff">
+          <div class="tile-orb"></div><div class="tile-info"><div><span class="person">Noah <span class="person-state">• Writing</span></span></div><span class="mic-state" title="Microphone muted">⌁</span></div>
+        </article>
+        <article class="study-tile you-tile" id="youTile">
+          <div class="you-placeholder" id="youPlaceholder"><div><div class="initial">T</div><p>Your camera is off</p></div></div>
+          <div class="tile-info"><div><span class="person">You <span class="person-state" id="yourState">• Ready to focus</span></span></div><span class="mic-state" id="yourMic">⌁</span></div>
+        </article>
+      </section>
+
+      <nav class="controls" aria-label="Room controls">
+        <button class="control" id="micButton" aria-pressed="false" title="Turn microphone on">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 11v1a7 7 0 0 1-14 0v-1M12 19v3M8 22h8"/></svg>
+        </button>
+        <button class="control" id="cameraButton" aria-pressed="false" title="Turn camera on">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg>
+        </button>
+        <button class="control active" id="focusButton" aria-pressed="true" title="Focus mode">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
+        </button>
+        <button class="control danger" id="leaveButton" title="Leave room">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M6 12l4-4M6 12l4 4"/><path d="M14 5h5a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/></svg>
+        </button>
+      </nav>
+    </main>
+
+    <aside class="goals" aria-label="Focus tools">
+      <section class="timer-panel" aria-labelledby="timerHeading">
+        <div class="panel-head"><h2 id="timerHeading">Focus timer</h2><div class="mode-tabs"><button class="mode-tab active" data-minutes="50">50</button><button class="mode-tab" data-minutes="25">25</button><button class="mode-tab" data-minutes="10">10</button></div></div>
+        <div class="timer-face" id="timerFace"><div class="timer-copy"><span class="time" id="timeDisplay">50:00</span><span class="timer-label" id="timerLabel">Ready when you are</span></div></div>
+        <div class="timer-actions"><button class="primary" id="startTimer">Start focus</button><button class="secondary" id="resetTimer">Reset</button></div>
+      </section>
+
+      <section class="sound-panel" aria-labelledby="soundHeading">
+        <div class="panel-head"><h2 id="soundHeading">Ambient sound</h2><span style="color:var(--muted);font-size:.75rem">Optional</span></div>
+        <div class="sound-options"><button class="sound active" data-sound="none">Quiet</button><button class="sound" data-sound="brown">Brown noise</button><button class="sound" data-sound="rain">Soft rain</button></div>
+        <div class="volume-row"><span aria-hidden="true">◖</span><input id="volume" type="range" min="0" max="100" value="28" aria-label="Ambient sound volume"></div>
+      </section>
+
+      <section class="tasks-panel" aria-labelledby="tasksHeading">
+        <div class="panel-head"><h2 id="tasksHeading">Today’s goals</h2><span id="taskRatio" style="color:var(--muted);font-size:.78rem">0 / 2</span></div>
+        <div class="progress-block"><div class="progress-copy"><span>Daily progress</span><span id="progressPercent">0%</span></div><div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div></div>
+        <form class="task-form" id="taskForm"><input id="taskInput" maxlength="80" placeholder="Add a study goal…" aria-label="New study goal"><button class="add-task" aria-label="Add goal">+</button></form>
+        <ul class="task-list" id="taskList">
+          <li class="task-item"><button class="check" aria-label="Mark Review chapter 3 complete">✓</button><span class="task-text">Review chapter 3</span><button class="remove" aria-label="Remove Review chapter 3">×</button></li>
+          <li class="task-item"><button class="check" aria-label="Mark Finish probability homework complete">✓</button><span class="task-text">Finish probability homework</span><button class="remove" aria-label="Remove Finish probability homework">×</button></li>
+        </ul>
+        <div class="small-stats"><div class="stat"><strong id="focusMinutes">0m</strong><span>focused today</span></div><div class="stat"><strong id="sessionCount">0</strong><span>sessions done</span></div></div>
+      </section>
+    </aside>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      var rooms = {
+        "Deep Focus": { members: 148, icon: "◎", note: "stay muted · cameras optional" },
+        "Quiet Library": { members: 93, icon: "▤", note: "silent room · cameras optional" },
+        "Late Night": { members: 61, icon: "☾", note: "night owls · low-pressure focus" },
+        "Exam Prep": { members: 76, icon: "✦", note: "high intensity · 50 min sprints" }
+      };
+      var timer = { total: 3000, left: 3000, running: false, interval: null, startedAt: null };
+      var audio = { context: null, source: null, gain: null, type: "none" };
+      var toastTimeout;
+
+      function $(id) { return document.getElementById(id); }
+      function showToast(message) {
+        $("toast").textContent = message;
+        $("toast").classList.add("show");
+        clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(function () { $("toast").classList.remove("show"); }, 2200);
+      }
+      function setRoom(name) {
+        var room = rooms[name];
+        if (!room) return false;
+        $("roomTitle").textContent = name;
+        $("roomBadge").textContent = room.icon;
+        $("roomSubtitle").textContent = room.members + " people · " + room.note;
+        document.querySelectorAll("[data-room]").forEach(function (button) {
+          button.classList.toggle("active", button.dataset.room === name);
+        });
+        showToast("Joined " + name);
+        return true;
+      }
+      document.querySelectorAll("[data-room]").forEach(function (button) {
+        button.addEventListener("click", function () { setRoom(button.dataset.room); });
+      });
+
+      function formatTime(seconds) {
+        var min = Math.floor(seconds / 60);
+        var sec = seconds % 60;
+        return String(min).padStart(2, "0") + ":" + String(sec).padStart(2, "0");
+      }
+      function renderTimer() {
+        $("timeDisplay").textContent = formatTime(timer.left);
+        var elapsed = timer.total - timer.left;
+        $("timerFace").style.setProperty("--progress", Math.max(0, (elapsed / timer.total) * 100) + "%");
+        $("timerLabel").textContent = timer.running ? "Focus in progress" : (timer.left === timer.total ? "Ready when you are" : "Paused");
+        $("startTimer").textContent = timer.running ? "Pause" : (timer.left < timer.total ? "Continue" : "Start focus");
+        $("yourState").textContent = timer.running ? "• Focusing now" : "• Ready to focus";
+      }
+      function stopTimer() {
+        timer.running = false;
+        clearInterval(timer.interval);
+        timer.interval = null;
+        renderTimer();
+      }
+      function completeTimer() {
+        stopTimer();
+        var minutes = Math.round(timer.total / 60);
+        $("focusMinutes").textContent = (parseInt($("focusMinutes").textContent, 10) + minutes) + "m";
+        $("sessionCount").textContent = String(parseInt($("sessionCount").textContent, 10) + 1);
+        $("timerLabel").textContent = "Session complete";
+        showToast("Focus session complete — nice work.");
+      }
+      function toggleTimer() {
+        if (timer.running) { stopTimer(); return; }
+        if (timer.left <= 0) timer.left = timer.total;
+        timer.running = true;
+        timer.startedAt = Date.now() - (timer.total - timer.left) * 1000;
+        timer.interval = setInterval(function () {
+          timer.left = Math.max(0, timer.total - Math.floor((Date.now() - timer.startedAt) / 1000));
+          renderTimer();
+          if (timer.left === 0) completeTimer();
+        }, 250);
+        renderTimer();
+      }
+      function setMinutes(minutes) {
+        if (![10,25,50].includes(minutes)) return false;
+        stopTimer();
+        timer.total = minutes * 60;
+        timer.left = timer.total;
+        document.querySelectorAll(".mode-tab").forEach(function (tab) {
+          tab.classList.toggle("active", Number(tab.dataset.minutes) === minutes);
+        });
+        renderTimer();
+        return true;
+      }
+      $("startTimer").addEventListener("click", toggleTimer);
+      $("resetTimer").addEventListener("click", function () { stopTimer(); timer.left = timer.total; renderTimer(); });
+      document.querySelectorAll(".mode-tab").forEach(function (tab) {
+        tab.addEventListener("click", function () { setMinutes(Number(tab.dataset.minutes)); });
+      });
+
+      function updateTasks() {
+        var tasks = Array.from(document.querySelectorAll(".task-item"));
+        var done = tasks.filter(function (task) { return task.classList.contains("done"); }).length;
+        var pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0;
+        $("taskRatio").textContent = done + " / " + tasks.length;
+        $("progressPercent").textContent = pct + "%";
+        $("progressFill").style.width = pct + "%";
+      }
+      function wireTask(item) {
+        item.querySelector(".check").addEventListener("click", function () { item.classList.toggle("done"); updateTasks(); });
+        item.querySelector(".remove").addEventListener("click", function () { item.remove(); updateTasks(); });
+      }
+      function addTask(text) {
+        text = String(text || "").trim();
+        if (!text) return false;
+        var item = document.createElement("li");
+        item.className = "task-item";
+        var check = document.createElement("button");
+        check.className = "check";
+        check.textContent = "✓";
+        check.setAttribute("aria-label", "Mark " + text + " complete");
+        var label = document.createElement("span");
+        label.className = "task-text";
+        label.textContent = text;
+        var remove = document.createElement("button");
+        remove.className = "remove";
+        remove.textContent = "×";
+        remove.setAttribute("aria-label", "Remove " + text);
+        item.append(check, label, remove);
+        $("taskList").appendChild(item);
+        wireTask(item);
+        updateTasks();
+        return true;
+      }
+      document.querySelectorAll(".task-item").forEach(wireTask);
+      $("taskForm").addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (addTask($("taskInput").value)) { $("taskInput").value = ""; showToast("Goal added"); }
+      });
+      updateTasks();
+
+      $("micButton").addEventListener("click", function () {
+        var on = this.getAttribute("aria-pressed") !== "true";
+        this.setAttribute("aria-pressed", String(on));
+        this.classList.toggle("active", on);
+        this.title = on ? "Mute microphone" : "Turn microphone on";
+        $("yourMic").textContent = on ? "⌁̸" : "⌁";
+        showToast(on ? "Microphone on" : "Microphone muted");
+      });
+      $("cameraButton").addEventListener("click", function () {
+        var on = this.getAttribute("aria-pressed") !== "true";
+        this.setAttribute("aria-pressed", String(on));
+        this.classList.toggle("active", on);
+        this.title = on ? "Turn camera off" : "Turn camera on";
+        $("youPlaceholder").innerHTML = on ? '<div><div class="initial">T</div><p>Camera preview active</p></div>' : '<div><div class="initial">T</div><p>Your camera is off</p></div>';
+        $("youTile").style.background = on ? "linear-gradient(145deg,#312d53,#17182a)" : "linear-gradient(145deg,#171b28,#0d1018)";
+        showToast(on ? "Camera preview on" : "Camera off");
+      });
+      $("focusButton").addEventListener("click", function () {
+        var on = this.getAttribute("aria-pressed") !== "true";
+        this.setAttribute("aria-pressed", String(on));
+        this.classList.toggle("active", on);
+        document.body.style.setProperty("--muted", on ? "#969caf" : "#aeb4c6");
+        showToast(on ? "Focus mode on" : "Focus mode off");
+      });
+      $("leaveButton").addEventListener("click", function () {
+        stopTimer();
+        $("sessionPill").textContent = "○ You left the room";
+        $("sessionPill").style.color = "#c8cbd5";
+        $("sessionPill").style.borderColor = "var(--line)";
+        $("sessionPill").style.background = "rgba(255,255,255,.04)";
+        showToast("You left the room. Join any room to return.");
+      });
+
+      function createNoise(type) {
+        if (!window.AudioContext && !window.webkitAudioContext) return false;
+        if (!audio.context) audio.context = new (window.AudioContext || window.webkitAudioContext)();
+        if (audio.source) { try { audio.source.stop(); } catch (_) {} audio.source.disconnect(); }
+        var length = audio.context.sampleRate * 3;
+        var buffer = audio.context.createBuffer(1, length, audio.context.sampleRate);
+        var data = buffer.getChannelData(0);
+        var last = 0;
+        for (var i = 0; i < length; i++) {
+          var white = Math.random() * 2 - 1;
+          if (type === "brown") { last = (last + .02 * white) / 1.02; data[i] = last * 3.4; }
+          else { data[i] = (white * .55) + (i > 0 ? data[i - 1] * .22 : 0); }
+        }
+        audio.source = audio.context.createBufferSource();
+        audio.source.buffer = buffer;
+        audio.source.loop = true;
+        audio.gain = audio.context.createGain();
+        audio.gain.gain.value = Number($("volume").value) / 400;
+        audio.source.connect(audio.gain).connect(audio.context.destination);
+        audio.source.start();
+        return true;
+      }
+      function setSound(type) {
+        audio.type = type;
+        document.querySelectorAll(".sound").forEach(function (button) { button.classList.toggle("active", button.dataset.sound === type); });
+        if (type === "none") {
+          if (audio.source) { try { audio.source.stop(); } catch (_) {} audio.source = null; }
+          return true;
+        }
+        var ok = createNoise(type);
+        if (!ok) showToast("Ambient audio is not supported here.");
+        return ok;
+      }
+      document.querySelectorAll(".sound").forEach(function (button) {
+        button.addEventListener("click", function () { setSound(button.dataset.sound); });
+      });
+      $("volume").addEventListener("input", function () {
+        if (audio.gain) audio.gain.gain.value = Number(this.value) / 400;
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.code === "Space" && !["INPUT","BUTTON"].includes(document.activeElement.tagName)) {
+          event.preventDefault();
+          toggleTimer();
+        }
+      });
+
+      function registerWebMCP() {
+        var context = document.modelContext;
+        if (!context || !context.registerTool) return;
+        var tools = [
+          {
+            name: "add_study_goal", title: "Add study goal",
+            description: "Add a new goal to the visible Today’s goals list.",
+            inputSchema: { type: "object", properties: { goal: { type: "string", minLength: 1, maxLength: 80 } }, required: ["goal"], additionalProperties: false },
+            annotations: { readOnlyHint: false, untrustedContentHint: false },
+            execute: function (input) {
+              if (!input || typeof input.goal !== "string" || !input.goal.trim() || input.goal.length > 80) throw new Error("Goal must be 1–80 characters.");
+              addTask(input.goal);
+              return { added: true, goal: input.goal.trim() };
+            }
+          },
+          {
+            name: "configure_focus_timer", title: "Configure focus timer",
+            description: "Set the visible focus timer to 10, 25, or 50 minutes without starting it.",
+            inputSchema: { type: "object", properties: { minutes: { type: "integer", enum: [10,25,50] } }, required: ["minutes"], additionalProperties: false },
+            annotations: { readOnlyHint: false, untrustedContentHint: false },
+            execute: function (input) {
+              if (!input || !setMinutes(Number(input.minutes))) throw new Error("Minutes must be 10, 25, or 50.");
+              return { configured: true, minutes: Number(input.minutes), running: false };
+            }
+          },
+          {
+            name: "join_study_room", title: "Join study room",
+            description: "Join one of the visible study rooms and update the active room.",
+            inputSchema: { type: "object", properties: { room: { type: "string", enum: Object.keys(rooms) } }, required: ["room"], additionalProperties: false },
+            annotations: { readOnlyHint: false, untrustedContentHint: false },
+            execute: function (input) {
+              if (!input || !setRoom(input.room)) throw new Error("Unknown room.");
+              return { joined: true, room: input.room, members: rooms[input.room].members };
+            }
+          }
+        ];
+        tools.forEach(function (tool) {
+          try { Promise.resolve(context.registerTool(tool)).catch(function () {}); } catch (_) {}
+        });
+      }
+      registerWebMCP();
+      renderTimer();
+    })();
+  </script>
+</body>
+</html>
