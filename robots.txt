@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://teya-onehash.github.io/focusroom-study/sitemap.xml

@@ -5,30 +5,52 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script>
     (function () {
-      var saved = localStorage.getItem("focusroom-theme");
+      var saved = localStorage.getItem("mellow-commons-theme") || localStorage.getItem("focusroom-theme");
       var theme = saved === "light" || saved === "dark"
         ? saved
         : (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
       document.documentElement.dataset.theme = theme;
     }());
   </script>
-  <meta name="theme-color" content="#090b12">
-  <meta name="description" content="FocusRoom is a free live study community with video focus rooms, timers, goals, profiles, and privacy controls.">
-  <title>FocusRoom — Study together</title>
+  <meta name="theme-color" content="#0e0c0b">
+  <meta name="description" content="Mellow Commons is a calm, shared study community with live focus rooms, timers, goals, profiles, and privacy controls.">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <meta name="application-name" content="Mellow Commons">
+  <link rel="canonical" href="https://teya-onehash.github.io/focusroom-study/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Mellow Commons">
+  <meta property="og:title" content="Mellow Commons — Focus together. Grow at your pace.">
+  <meta property="og:description" content="A calm, shared study community with live focus rooms, timers, goals, profiles, and privacy controls.">
+  <meta property="og:url" content="https://teya-onehash.github.io/focusroom-study/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Mellow Commons — Focus together. Grow at your pace.">
+  <meta name="twitter:description" content="A calm, shared study community where students focus, connect, and grow together.">
+  <title>Mellow Commons — Focus together. Grow at your pace.</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%236c63ff'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='white' stroke-width='6' stroke-dasharray='82 32' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='32' r='4' fill='white'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://meet.jit.si">
-  <link rel="stylesheet" href="./styles.css?v=20260924-13">
+  <link rel="stylesheet" href="./styles.css?v=20260924-17">
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Mellow Commons",
+      "alternateName": "Mellow Commons Study Community",
+      "url": "https://teya-onehash.github.io/focusroom-study/",
+      "description": "A calm, shared study community where students focus, connect, and grow together."
+    }
+  </script>
 </head>
 <body>
   <div id="app" aria-live="polite">
     <div class="boot-screen">
       <span class="brand-mark" aria-hidden="true"></span>
-      <p>Opening FocusRoom…</p>
+      <h1>Mellow Commons</h1>
+      <p>Focus together. Grow at your pace.</p>
     </div>
   </div>
   <div id="modalRoot"></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="https://meet.jit.si/external_api.js"></script>
-  <script type="module" src="./app.js?v=20260924-13"></script>
+  <script type="module" src="./app.js?v=20260924-17"></script>
 </body>
 </html>

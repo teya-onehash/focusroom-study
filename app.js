@@ -1,5 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js?v=20260924-13";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js?v=20260924-17";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
@@ -9,7 +9,7 @@ const app = document.querySelector("#app");
 const modalRoot = document.querySelector("#modalRoot");
 const toastEl = document.querySelector("#toast");
 const savedPreferences = (function () {
-  try { return JSON.parse(localStorage.getItem("focusroom-study-preferences") || "{}"); }
+  try { return JSON.parse(localStorage.getItem("mellow-commons-study-preferences") || "{}"); }
   catch (error) { return {}; }
 }());
 const defaultPreferences = { defaultDuration:50, defaultRoom:"deep-focus", defaultCamera:false, defaultMicrophone:false, soundCues:true, compactMode:false };
@@ -33,6 +33,8 @@ const state = {
   encouragements: [],
   members: [],
   memberProfile: null,
+  memberInsights: null,
+  profileTab: "summary",
   profileReturnView: "encouragements",
   conversations: [],
   activeConversationId: null,
@@ -52,6 +54,16 @@ const state = {
   privateRooms: [],
   roomCounts: {},
   channels: [],
+  communityChannels: [],
+  activeChannelId: null,
+  channelMessages: [],
+  communityChannel: null,
+  feedbackPosts: [],
+  feedbackSort: "new",
+  feedbackCategory: "all",
+  feedbackSearch: "",
+  buddyPosts: [],
+  buddySearch: "",
   presenceChannel: null,
   view: "home",
   activeRoom: null,
@@ -61,6 +73,15 @@ const state = {
   previewAnimation: null,
   pendingRoom: null,
   pendingPrivate: false,
+  meetingFrame: localStorage.getItem("mellow-meeting-frame") || "none",
+  meetingSticker: localStorage.getItem("mellow-meeting-sticker") || "",
+  accountMenuOpen: false,
+  chatMenuOpen: false,
+  focusAllowance: { plan:"free", limit_minutes:240, used_seconds:0, remaining_seconds:14400, is_unlimited:false },
+  focusVisitId: null,
+  focusHeartbeat: null,
+  focusHeartbeatBusy: false,
+  leavingMeeting: false,
   joinDraft: { intention: "", duration: Number(studyPreferences.defaultDuration), camera: Boolean(studyPreferences.defaultCamera), microphone: Boolean(studyPreferences.defaultMicrophone) },
   preferences: studyPreferences,
   timerSeconds: 25 * 60,
@@ -81,7 +102,7 @@ const blogs = [
     tag: "Focus science",
     title: "Why studying beside someone can make starting easier",
     excerpt: "Body doubling adds gentle social structure without turning focus into a competition.",
-    body: "<p>Body doubling means doing your own work while another person is present and working too. You are not expected to collaborate. The value is the quiet sense that someone else has also chosen to begin.</p><h3>Make the room work for you</h3><p>Choose one clear task before you join. Keep your microphone muted, put distractions out of reach, and use the first minute to write a tiny finish line: one page, ten questions, or twenty-five focused minutes.</p><h3>Camera choice and comfort</h3><p>Your camera is always your choice. A desk view, virtual background, or camera-off session can still provide structure. FocusRoom starts calls muted and with video off so you decide what to share.</p>"
+    body: "<p>Body doubling means doing your own work while another person is present and working too. You are not expected to collaborate. The value is the quiet sense that someone else has also chosen to begin.</p><h3>Make the room work for you</h3><p>Choose one clear task before you join. Keep your microphone muted, put distractions out of reach, and use the first minute to write a tiny finish line: one page, ten questions, or twenty-five focused minutes.</p><h3>Camera choice and comfort</h3><p>Your camera is always your choice. A desk view, virtual background, or camera-off session can still provide structure. Mellow Commons starts calls muted and with video off so you decide what to share.</p>"
   },
   {
     id: "fifty-ten",
@@ -125,11 +146,26 @@ function avatarUrl(path) {
 function avatarMarkup(person, extraClass) {
   const item = person || {};
   const url = avatarUrl(item.avatar_path);
-  const classes = "avatar" + (extraClass ? " " + extraClass : "") + (url ? " has-photo" : "");
+  const frame = String(item.profile_frame || "none").replace(/[^a-z-]/g, "");
+  const sticker = stickerGlyph(item.profile_sticker);
+  const classes = "avatar frame-" + frame + (extraClass ? " " + extraClass : "") + (url ? " has-photo" : "");
   const color = esc(item.avatar_color || "#7c6cff");
-  return '<span class="' + classes + '" style="background:' + color + '">' +
+  return '<span class="avatar-wrap"><span class="' + classes + '" style="background:' + color + '">' +
     (url ? '<img src="' + esc(url) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : initials(item.display_name)) +
-    '</span>';
+    '</span>' + (sticker ? '<span class="avatar-sticker" aria-hidden="true">' + sticker + '</span>' : '') + '</span>';
+}
+
+function stickerGlyph(name) {
+  return ({ moon:"☾", sprout:"🌱", sparkles:"✦", books:"📚", coffee:"☕", flower:"✿" })[name] || "";
+}
+
+function authReturnUrl() {
+  return new URL(".", window.location.href).href.split("#")[0].split("?")[0];
+}
+
+function dailyTimeLabel() {
+  if (!state.focusAllowance || state.focusAllowance.is_unlimited) return "Daily room time · unlimited";
+  return "Daily room time · " + fmtMinutes(Math.max(0, Math.ceil(Number(state.focusAllowance.remaining_seconds || 0) / 60))) + " left";
 }
 
 function planLabel(plan) {
@@ -181,12 +217,12 @@ function setTheme(theme) {
   state.theme = theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = state.theme;
   document.querySelector('meta[name="theme-color"]').setAttribute("content", state.theme === "light" ? "#f8f7fc" : "#090b13");
-  localStorage.setItem("focusroom-theme", state.theme);
+  localStorage.setItem("mellow-commons-theme", state.theme);
   renderApp();
 }
 
 function publicHeader() {
-  return '<header class="topbar"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>FocusRoom</a><nav class="top-links"><a href="#rooms">Rooms</a><a href="#features">Features</a><a href="#pricing">Plans</a><a href="#journal">Journal</a>' + themeToggle() + '<button class="btn btn-sm" data-auth="login">Log in</button><button class="btn btn-primary btn-sm" data-auth="signup">Join free</button></nav></header>';
+  return '<header class="topbar"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>Mellow Commons</a><nav class="top-links"><a href="#rooms">Rooms</a><a href="#features">Features</a><a href="#pricing">Plans</a><a href="#journal">Journal</a>' + themeToggle() + '<button class="btn btn-sm" data-auth="login">Log in</button><button class="btn btn-primary btn-sm" data-auth="signup">Join free</button></nav></header>';
 }
 
 function roomCards(publicMode) {
@@ -210,7 +246,7 @@ function pricingCards() {
       '<span class="eyebrow">' + plan.note + '</span><h3>' + plan.name + '</h3><div class="price">' + plan.price + '<small>' + plan.unit + '</small></div>' +
       (plan.annual ? '<div class="annual-note"><strong>$5.83/month</strong> when billed yearly at $69.96</div>' : '') +
       '<ul class="perk-list">' + plan.perks.map(function (perk) { return '<li>' + perk + '</li>'; }).join("") + '</ul>' +
-      (plan.key === "free" ? '<button class="btn" ' + (state.session ? 'data-view="rooms"' : 'data-auth="signup"') + '>Use FocusRoom free</button>' : '<button class="btn btn-primary" data-checkout="' + plan.key + '">Choose ' + plan.name + '</button>' + (plan.annual ? '<button class="btn btn-sm annual-button" data-checkout="premium_year">Choose annual Premium</button>' : '')) +
+      (plan.key === "free" ? '<button class="btn" ' + (state.session ? 'data-view="rooms"' : 'data-auth="signup"') + '>Use Mellow Commons free</button>' : '<button class="btn btn-primary" data-checkout="' + plan.key + '">Choose ' + plan.name + '</button>' + (plan.annual ? '<button class="btn btn-sm annual-button" data-checkout="premium_year">Choose annual Premium</button>' : '')) +
       (plan.key === "free" ? '<span class="apple-pay">No card required</span>' : '<span class="apple-pay">Secure Stripe checkout · Apple Pay on eligible devices once activated</span>') + '</article>';
   }).join("");
 }
@@ -228,29 +264,28 @@ function renderLanding() {
   }).join("");
   app.innerHTML = baseBackground() + '<div class="landing">' + publicHeader() +
     '<main><section class="hero"><div class="hero-copy"><span class="eyebrow">Live focus rooms · free to join</span><h1><span class="gradient-text">Open a room.</span><br>Start the work.</h1><p>Choose what you are working on, test your camera and microphone, and focus beside other students in an always-open study space.</p><div class="hero-actions"><button class="btn btn-primary" data-auth="signup">Create a free account</button><a class="btn" href="#rooms">See the live rooms</a></div><div class="trust-row"><span>Device check before joining</span><span>Camera always optional</span><span>Real live counts</span></div></div>' +
-    '<div class="hero-visual product-preview" aria-label="FocusRoom product preview"><div class="preview-top"><div><span class="eyebrow">Live focus floor</span><h2>Choose your room</h2></div><span class="online-pill"><i></i>' + totalOnline + ' online</span></div><div class="preview-intention"><span>Today’s intention</span><strong>Finish one clear task</strong><div class="preview-progress"><i></i></div></div><div class="preview-room-list">' + (previewRooms || '<div class="skeleton"></div>') + '</div><div class="preview-footer"><span>25</span><span class="active">50</span><span>90 min</span><button class="btn btn-primary btn-sm" data-auth="signup">Start session</button></div></div></section>' +
+    '<div class="hero-visual product-preview" aria-label="Mellow Commons product preview"><div class="preview-top"><div><span class="eyebrow">Live focus floor</span><h2>Choose your room</h2></div><span class="online-pill"><i></i>' + totalOnline + ' online</span></div><div class="preview-intention"><span>Today’s intention</span><strong>Finish one clear task</strong><div class="preview-progress"><i></i></div></div><div class="preview-room-list">' + (previewRooms || '<div class="skeleton"></div>') + '</div><div class="preview-footer"><span>25</span><span class="active">50</span><span>90 min</span><button class="btn btn-primary btn-sm" data-auth="signup">Start session</button></div></div></section>' +
     '<section class="section" id="rooms"><div class="section-head"><div><span class="eyebrow">Live rooms</span><h2>Find your focus atmosphere</h2></div><p>Every number is based on people actually connected to a room. Sign in to join with camera and microphone controls.</p></div><div class="room-grid">' + roomCards(true) + '</div></section>' +
     '<section class="section session-steps"><div class="section-head"><div><span class="eyebrow">A real session, not another feed</span><h2>From intention to finished work</h2></div></div><div class="grid-3"><article class="card step-card"><span>01</span><h3>Name the task</h3><p>Write one concrete intention and choose a 25, 50, or 90 minute block.</p></article><article class="card step-card"><span>02</span><h3>Check your setup</h3><p>Preview video, confirm microphone activity, and choose the exact devices you want.</p></article><article class="card step-card"><span>03</span><h3>Focus with others</h3><p>Join muted or camera-off, use the timer, and save finished sessions to your history.</p></article></div></section>' +
     '<section class="section" id="features"><div class="section-head"><div><span class="eyebrow">Made for momentum</span><h2>More than a video call</h2></div></div><div class="bento"><article class="card feature-card"><div class="feature-icon">◷</div><div><h3>Focus timer and goals</h3><p>Choose 25 or 50 minutes, write the next task, and save completed sessions to your history.</p></div></article><article class="card feature-card"><div class="feature-icon">♡</div><div><h3>Real encouragement</h3><p>Send thoughtful support to people who are showing up. Daily allowances scale with your membership.</p></div></article><article class="card feature-card"><div class="feature-icon">☾</div><div><h3>Cozy ambience</h3><p>Use generated rain, café, or fireside sound without opening another distracting tab.</p></div></article></div></section>' +
     '<section class="section" id="pricing"><div class="section-head"><div><span class="eyebrow">Simple student pricing</span><h2>Free for focus. Upgrade for connection.</h2></div><p>Public-room time scales by plan. Private audio and video calls are reserved for Premium and Buddy.</p></div><div class="pricing-grid pricing-four">' + pricingCards() + '</div><p class="plan-fine-print">*Unlimited messaging is intended for normal person-to-person use and remains protected by anti-spam, blocking, reporting, file-size, and safety controls.</p></section>' +
     '<section class="section" id="journal"><div class="section-head"><div><span class="eyebrow">Focus journal</span><h2>Small ideas that help</h2></div></div><div class="grid-3">' + blogCards() + '</div></section></main>' +
-    '<footer class="footer"><div><div class="brand"><span class="brand-mark"></span>FocusRoom</div><p>Study together without the pressure.</p></div><div><button class="btn btn-sm" data-privacy>Privacy</button> <button class="btn btn-sm" data-auth="login">Member login</button></div></footer></div>';
+    '<footer class="footer"><div><div class="brand"><span class="brand-mark"></span>Mellow Commons</div><p>Study together without the pressure.</p></div><div><button class="btn btn-sm" data-privacy>Privacy</button> <button class="btn btn-sm" data-auth="login">Member login</button></div></footer></div>';
 }
 
 function renderAuth() {
   const signup = state.authMode === "signup";
-  app.innerHTML = baseBackground() + '<main class="auth-shell"><section class="card auth-card"><div class="auth-head"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>FocusRoom</a>' + themeToggle() + '</div><div class="auth-tabs"><button class="' + (signup ? 'active' : '') + '" data-auth-tab="signup">Create account</button><button class="' + (!signup ? 'active' : '') + '" data-auth-tab="login">Log in</button></div>' +
-    '<form class="form" id="authForm">' +
-    (signup ? '<div class="field"><label for="displayName">Display name</label><input id="displayName" name="displayName" minlength="2" maxlength="40" required autocomplete="name" placeholder="How others will see you"></div>' : '') +
-    '<div class="field"><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" minlength="8" required autocomplete="' + (signup ? 'new-password' : 'current-password') + '" placeholder="At least 8 characters"></div>' +
-    '<button class="btn btn-primary" type="submit">' + (signup ? 'Create free account' : 'Log in') + '</button><p class="form-note">' + (signup ? 'You may need to confirm your email. Camera and microphone remain off until you choose to join a call.' : 'Welcome back. Your saved goals and focus history will be restored.') + '</p></form>' + (!signup ? '<button class="btn btn-link" data-open-resend>Didn’t receive a verification email?</button>' : '') + '<button class="btn" data-public-home>← Back home</button></section></main>';
+  app.innerHTML = baseBackground() + '<main class="auth-stage"><button class="auth-stage-close" data-public-home aria-label="Close">×</button><section class="auth-promise"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>Mellow Commons</a><span class="eyebrow">A softer place to get things done</span><h1>Study beside people who are trying too.</h1><p>Join live rooms, track quiet progress, find a study buddy, and keep your momentum in one calm student commons.</p><div class="auth-mini-room"><div class="auth-avatar-row"><i></i><i></i><i></i><i></i></div><strong>Deep Focus · live now</strong><small>Camera is always your choice</small></div></section><section class="card auth-card auth-modal"><div class="auth-head"><div><span class="eyebrow">' + (signup ? 'Join the commons' : 'Welcome back') + '</span><h2>' + (signup ? 'Create your account' : 'Log in to Mellow Commons') + '</h2></div>' + themeToggle() + '</div><button class="btn google-auth" data-google-auth><span>G</span>Continue with Google</button><div class="auth-divider"><span>or use email</span></div><form class="form" id="authForm">' +
+    (signup ? '<div class="field"><label for="displayName">Display name</label><input id="displayName" name="displayName" minlength="2" maxlength="40" required autocomplete="name" placeholder="How students will see you"></div>' : '') +
+    '<div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><div class="field password-field"><label for="password">Password</label><input id="password" name="password" type="password" minlength="8" required autocomplete="' + (signup ? 'new-password' : 'current-password') + '" placeholder="At least 8 characters"><button type="button" data-password-toggle aria-label="Show password">Show</button></div>' +
+    (!signup ? '<button type="button" class="text-action" data-forgot-password>Forgot password?</button>' : '') + '<button class="btn btn-primary auth-submit" type="submit">' + (signup ? 'Create free account' : 'Log in') + '</button><p class="form-note">' + (signup ? 'By joining, you agree to keep the commons respectful. Camera and microphone stay off until you choose otherwise.' : 'Your goals, messages, and focus history will be waiting.') + '</p></form><p class="auth-switch">' + (signup ? 'Already a member? <button data-auth-tab="login">Log in</button>' : 'New here? <button data-auth-tab="signup">Create an account</button>') + '</p>' + (!signup ? '<button class="btn btn-link" data-open-resend>Didn’t receive a verification email?</button>' : '') + '</section></main>';
 }
 
 function navItems() {
   const items = [
     ["home","⌂","Home"], ["rooms","◎","Study rooms"], ["goals","✓","Goals & progress"],
-    ["encouragements","♡","Encouragements"], ["messages","✉","Messages"], ["private","♢","Private calls"], ["plus","✦","Membership"],
-    ["blog","▤","Focus journal"], ["profile","●","Profile"], ["settings","⚙","Privacy & settings"]
+    ["encouragements","♡","Community"], ["buddies","♧","Study buddies"], ["community","◌","Conversations"],
+    ["blog","▤","Focus journal"], ["feedback","△","Feedback"]
   ];
   if (state.admin && state.admin.is_admin) items.push(["admin","◆","Admin center"]);
   return items.map(function (item) {
@@ -264,7 +299,10 @@ function appShell(content, title) {
   const membership = state.admin && state.admin.role === "owner"
     ? '<span class="owner-badge">◆ OWNER · ' + esc(String(plan).toUpperCase()) + '</span>'
     : (plan !== "free" ? '<span class="plus-badge">✦ ' + esc(String(plan).toUpperCase()) + '</span>' : 'Free member');
-  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><button class="side-profile" data-view="profile">' + avatarMarkup(state.profile) + '<span><strong>' + esc(name) + '</strong><small>' + membership + '</small></span></button></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div class="app-top-actions">' + themeToggle() + '<button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
+  const accountMenu = state.accountMenuOpen ? '<div class="account-menu popover"><div class="account-summary">' + avatarMarkup(state.profile) + '<span><strong>' + esc(name) + '</strong><small>' + membership + '</small></span></div><button data-member-profile="' + esc(state.user.id) + '">● View public profile</button><button data-view="profile">✎ Edit profile</button><button data-view="settings">⚙ Privacy & settings</button><button data-view="plus">✦ Manage membership</button>' + (state.admin && state.admin.is_admin ? '<button data-view="admin">◆ Admin center</button>' : '') + '<button class="danger" data-signout>↪ Log out</button></div>' : '';
+  const chatRows = state.conversations.slice(0, 4).map(function (conversation) { const person = conversationPerson(conversation); return '<button data-conversation="' + esc(conversation.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + esc(messagePreview(conversation)) + '</small></span></button>'; }).join("");
+  const chatMenu = state.chatMenuOpen ? '<div class="quick-chat popover"><div class="popover-title"><strong>Chats</strong><button data-view="community">Open all →</button></div><button class="channel-shortcut" data-channel-slug="general"><span>#</span><strong>General channel</strong></button>' + (chatRows || '<p class="empty">Your conversations will appear here.</p>') + '</div>' : '';
+  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span><span>Mellow<br><small>Commons</small></span></div><nav class="side-nav">' + navItems() + '</nav><div class="sidebar-streak"><span>🔥</span><strong>' + streakDays() + ' day streak</strong><small>Focus for 30m to grow it</small></div></aside><main class="main"><header class="app-top"><div class="top-title"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2><span class="daily-time">' + dailyTimeLabel() + '</span></div><div class="app-top-actions"><button class="unlock-button" data-view="plus">Unlock more</button><div class="top-popover-wrap"><button class="btn icon-btn top-icon" data-toggle-chat aria-label="Open chats">◌</button>' + chatMenu + '</div>' + themeToggle() + '<div class="top-popover-wrap"><button class="avatar-button top-avatar" data-toggle-account aria-label="Open account menu">' + avatarMarkup(state.profile) + '</button>' + accountMenu + '</div></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
 }
 
 function ambientDock() {
@@ -302,7 +340,7 @@ function timerCard() {
 
 function renderRooms() {
   const online = Object.values(state.roomCounts).reduce(function (sum, count) { return sum + count; }, 0);
-  appShell('<div class="page-head"><div><span class="eyebrow">Live focus floor</span><h1>Pick your room</h1><p>Choose an atmosphere, set your task, and check your devices before entering.</p></div><span class="online-pill"><i></i>' + online + ' connected</span></div><div class="room-grid">' + roomCards(false) + '</div><div class="room-info-grid"><section class="card"><span class="eyebrow">Before you enter</span><h3>You control what others see and hear</h3><p>The setup screen shows your local preview first. Camera is optional, and you can join muted.</p></section><section class="card"><span class="eyebrow">Community standard</span><h3>Keep the room useful</h3><p>No recording, harassment, disruptive audio, or sharing private information. Leave if anything feels unsafe.</p></section><section class="card"><span class="eyebrow">Your data</span><h3>Calls are not stored here</h3><p>FocusRoom tracks room presence only after connection. It does not record your Jitsi video or audio.</p></section></div>', "Study rooms");
+  appShell('<div class="page-head"><div><span class="eyebrow">Live focus floor</span><h1>Pick your room</h1><p>Choose an atmosphere, set your task, and check your devices before entering.</p></div><span class="online-pill"><i></i>' + online + ' connected</span></div><div class="room-grid">' + roomCards(false) + '</div><div class="room-info-grid"><section class="card"><span class="eyebrow">Before you enter</span><h3>You control what others see and hear</h3><p>The setup screen shows your local preview first. Camera is optional, and you can join muted.</p></section><section class="card"><span class="eyebrow">Community standard</span><h3>Keep the room useful</h3><p>No recording, harassment, disruptive audio, or sharing private information. Leave if anything feels unsafe.</p></section><section class="card"><span class="eyebrow">Your data</span><h3>Calls are not stored here</h3><p>Mellow Commons tracks room presence only after connection. It does not record your Jitsi video or audio.</p></section></div>', "Study rooms");
 }
 
 function goalsList(limit) {
@@ -320,7 +358,7 @@ function renderGoals() {
 function renderEncouragements() {
   const inbox = state.encouragements.map(function (item) {
     const sender = item.sender || { id:item.sender_id, display_name:item.sender_display_name, avatar_color:item.sender_avatar_color, avatar_path:item.sender_avatar_path };
-    return '<div class="inbox-item"><button class="avatar-button" data-member-profile="' + esc(item.sender_id) + '" aria-label="Open ' + esc(sender.display_name || "member") + ' profile">' + avatarMarkup(sender) + '</button><div><button class="profile-name" data-member-profile="' + esc(item.sender_id) + '">' + esc(sender.display_name || "FocusRoom member") + '</button> sent ' + (item.kind === "focus_boost" ? '<span class="plus-badge">✦ FOCUS BOOST</span>' : 'an encouragement') + '<p>' + esc(item.message || "Keep going — you’ve got this.") + '</p><span class="meta">' + new Date(item.created_at).toLocaleString() + '</span></div></div>';
+    return '<div class="inbox-item"><button class="avatar-button" data-member-profile="' + esc(item.sender_id) + '" aria-label="Open ' + esc(sender.display_name || "member") + ' profile">' + avatarMarkup(sender) + '</button><div><button class="profile-name" data-member-profile="' + esc(item.sender_id) + '">' + esc(sender.display_name || "Mellow Commons member") + '</button> sent ' + (item.kind === "focus_boost" ? '<span class="plus-badge">✦ FOCUS BOOST</span>' : 'an encouragement') + '<p>' + esc(item.message || "Keep going — you’ve got this.") + '</p><span class="meta">' + new Date(item.created_at).toLocaleString() + '</span></div></div>';
   }).join("");
   const members = state.members.map(function (member) {
     return '<article class="card member-card"><button class="member-profile-link" data-member-profile="' + esc(member.id) + '">' + avatarMarkup(member, "member-avatar") + '<span><strong>' + esc(member.display_name) + '</strong><small>' + esc(member.subject || "Working toward a goal") + '</small></span></button><div class="member-social"><span><strong>' + Number(member.pinned_by_count || 0) + '</strong> pinned by</span><button class="pin-chip ' + (member.viewer_has_pinned ? 'active' : '') + '" data-' + (member.viewer_has_pinned ? 'unpin' : 'pin') + '-member="' + esc(member.id) + '">' + (member.viewer_has_pinned ? '✓ Pinned' : '＋ Pin') + '</button></div><div class="actions"><button class="btn btn-sm" data-message-member="' + esc(member.id) + '">Message</button><button class="btn btn-sm" data-encourage="' + esc(member.id) + '">♡ Encourage</button></div></article>';
@@ -339,11 +377,45 @@ function renderPrivate() {
 
 function renderPlus() {
   const active = state.allowance.plan !== "free";
-  appShell('<div class="page-head"><div><span class="eyebrow">Membership</span><h1>Choose what fits</h1><p>Timers, goals, focus history, ambience, and appearance settings remain available to everyone.</p></div>' + (active ? '<span class="plus-badge">✦ ' + esc(String(state.allowance.plan).toUpperCase()) + ' ACTIVE</span>' : '') + '</div><div class="pricing-grid pricing-four">' + pricingCards() + '</div><p class="plan-fine-print">*Unlimited messaging is intended for normal person-to-person use and remains protected by anti-spam, blocking, reporting, file-size, and safety controls.</p><section class="card social-model-card"><span class="eyebrow">FocusRoom social model</span><h3>Pin means follow</h3><p>Pinning a member follows their study profile and adds one follower to their count. Unpinning immediately unfollows them. Plan limits control how many people you can pin—not how many followers you can earn.</p></section>', "Membership");
+  appShell('<div class="page-head"><div><span class="eyebrow">Membership</span><h1>Choose what fits</h1><p>Timers, goals, focus history, ambience, and appearance settings remain available to everyone.</p></div>' + (active ? '<span class="plus-badge">✦ ' + esc(String(state.allowance.plan).toUpperCase()) + ' ACTIVE</span>' : '') + '</div><div class="pricing-grid pricing-four">' + pricingCards() + '</div><p class="plan-fine-print">*Unlimited messaging is intended for normal person-to-person use and remains protected by anti-spam, blocking, reporting, file-size, and safety controls.</p><section class="card social-model-card"><span class="eyebrow">Mellow Commons social model</span><h3>Pin means follow</h3><p>Pinning a member follows their study profile and adds one follower to their count. Unpinning immediately unfollows them. Plan limits control how many people you can pin—not how many followers you can earn.</p></section>', "Membership");
 }
 
 function renderBlog() {
   appShell('<div class="page-head"><div><span class="eyebrow">Focus journal</span><h1>Guides for better sessions</h1><p>Practical, calm advice you can use today.</p></div></div><div class="grid-3">' + blogCards() + '</div><section class="card" style="margin-top:18px"><h3>Weekly reflection</h3><p>What helped you focus this week? What got in the way? Choose one small adjustment for your next session.</p></section>', "Focus journal");
+}
+
+function renderCommunity() {
+  const active = state.communityChannels.find(function (channel) { return channel.id === state.activeChannelId; }) || state.communityChannels[0];
+  const channelRows = state.communityChannels.map(function (channel) {
+    return '<button class="channel-row ' + (active && channel.id === active.id ? 'active' : '') + '" data-channel="' + esc(channel.id) + '"><span>' + esc(channel.icon || "#") + '</span><div><strong>' + esc(channel.name) + '</strong><small>' + esc(channel.description || "") + '</small></div></button>';
+  }).join("");
+  const messages = state.channelMessages.map(function (message) {
+    const person = { id:message.sender_id, display_name:message.display_name || message.sender_display_name || "Student", avatar_path:message.avatar_path || message.sender_avatar_path, avatar_color:message.avatar_color || message.sender_avatar_color, profile_frame:message.profile_frame, profile_sticker:message.profile_sticker };
+    return '<article class="channel-message"><button class="avatar-button" data-member-profile="' + esc(person.id) + '">' + avatarMarkup(person) + '</button><div><div class="message-meta"><button data-member-profile="' + esc(person.id) + '">' + esc(person.display_name) + '</button><time>' + new Date(message.created_at).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) + '</time></div><p>' + esc(message.body) + '</p></div></article>';
+  }).join("");
+  const canPost = active && (active.posting_scope !== "staff" || (state.admin && state.admin.is_admin));
+  const composer = canPost ? '<form class="channel-composer" id="channelMessageForm"><input type="hidden" name="channel_id" value="' + esc(active.id) + '"><textarea name="body" maxlength="2000" required placeholder="Message #' + esc(active.slug) + '"></textarea><button class="btn btn-primary">Send</button></form>' : '<div class="channel-readonly">Only Mellow Commons staff can post in this channel.</div>';
+  const dmRows = state.conversations.slice(0, 8).map(function (conversation) { const person = conversationPerson(conversation); return '<button class="conversation-row" data-conversation="' + esc(conversation.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + esc(messagePreview(conversation)) + '</small></span></button>'; }).join("");
+  appShell('<div class="community-layout"><aside class="community-rail"><div class="community-heading"><span class="eyebrow">Mellow Commons</span><h3>Channels</h3></div>' + channelRows + '<div class="rail-divider"></div><div class="community-heading"><h3>Direct messages</h3><button data-view="encouragements">＋</button></div>' + (dmRows || '<p class="empty">Find a student to start a DM.</p>') + '</aside><section class="channel-panel"><header><div><span class="eyebrow">Community channel</span><h1># ' + esc(active ? active.name : "Conversations") + '</h1><p>' + esc(active ? active.description : "Choose a channel") + '</p></div><button class="btn btn-sm" data-view="messages">Private DMs</button></header><div class="channel-scroll">' + (messages || '<div class="empty">Be the first to start a useful conversation.</div>') + '</div>' + (active ? composer : '') + '</section></div>', "Conversations");
+}
+
+function renderBuddies() {
+  const query = state.buddySearch.toLowerCase();
+  const posts = state.buddyPosts.filter(function (post) { return !query || [post.title, post.body, post.subject, post.timezone].join(" ").toLowerCase().includes(query); }).map(function (post) {
+    const person = { id:post.author_id, display_name:post.author_display_name || "Student", avatar_path:post.author_avatar_path, avatar_color:post.author_avatar_color };
+    return '<article class="card buddy-post"><div class="buddy-author"><button data-member-profile="' + esc(post.author_id) + '">' + avatarMarkup(person) + '</button><div><strong>' + esc(person.display_name) + '</strong><small>' + esc(post.subject || "Open to studying together") + '</small></div><time>' + new Date(post.created_at).toLocaleDateString() + '</time></div><h3>' + esc(post.title) + '</h3><p>' + esc(post.body) + '</p><div class="buddy-tags"><span>◷ ' + esc(post.timezone || "Flexible") + '</span><span>◎ ' + esc(post.study_mode || "Any style") + '</span></div><div class="actions">' + (post.is_own ? '<button class="btn btn-sm" data-close-buddy="' + esc(post.id) + '">Close post</button>' : '<button class="btn btn-primary btn-sm" data-message-member="' + esc(post.author_id) + '">Message</button><button class="btn btn-sm" data-member-profile="' + esc(post.author_id) + '">View profile</button>') + '</div></article>';
+  }).join("");
+  appShell('<div class="page-head"><div><span class="eyebrow">Accountability, without pressure</span><h1>Find a study buddy</h1><p>Post what you are studying, your timezone, and the kind of support that would help.</p></div><button class="btn btn-primary" data-new-buddy>Create a post</button></div><div class="buddy-search"><input aria-label="Search buddy posts" placeholder="Search subjects, goals, or timezones" value="' + esc(state.buddySearch) + '" data-buddy-search><span>' + state.buddyPosts.length + ' open posts</span></div><div class="buddy-grid">' + (posts || '<div class="card empty">No matching buddy posts yet. Create the first one.</div>') + '</div>', "Study buddies");
+}
+
+function renderFeedback() {
+  const query = state.feedbackSearch.toLowerCase();
+  const posts = state.feedbackPosts.filter(function (post) { return (state.feedbackCategory === "all" || post.category === state.feedbackCategory) && (!query || [post.title, post.body].join(" ").toLowerCase().includes(query)); }).map(function (post) {
+    const author = post.author_display_name || "Student";
+    return '<article class="feedback-post"><div class="feedback-vote"><button class="' + (post.viewer_voted ? 'active' : '') + '" data-feedback-vote="' + esc(post.id) + '" aria-label="Vote">⌃</button><strong>' + Number(post.votes_count || 0) + '</strong></div><div><div class="feedback-title"><h3>' + esc(post.title) + '</h3><span class="feedback-category ' + esc(post.category) + '">' + (post.category === "bug" ? "Bug" : "Feature request") + '</span></div><p>' + esc(post.body) + '</p><small>' + esc(author) + ' · ' + new Date(post.created_at).toLocaleDateString() + (post.status && post.status !== "open" ? ' · ' + esc(post.status) : '') + '</small></div></article>';
+  }).join("");
+  const leaders = state.feedbackPosts.slice().sort(function (a,b) { return Number(b.votes_count || 0) - Number(a.votes_count || 0); }).slice(0,5).map(function (post, index) { return '<div class="helpful-row"><span>' + (index + 1) + '</span><strong>' + esc(post.author_display_name || "Student") + '</strong><small>' + Number(post.votes_count || 0) + ' votes</small></div>'; }).join("");
+  appShell('<div class="feedback-layout"><section><div class="feedback-intro"><h1>Help shape Mellow Commons</h1><p>Share a useful feature idea or report a bug. Search first, then vote if someone has already posted it.</p></div><div class="feedback-toolbar"><div class="pills"><button class="pill ' + (state.feedbackSort === 'new' ? 'active' : '') + '" data-feedback-sort="new">New</button><button class="pill ' + (state.feedbackSort === 'top' ? 'active' : '') + '" data-feedback-sort="top">Top</button><button class="pill ' + (state.feedbackSort === 'trending' ? 'active' : '') + '" data-feedback-sort="trending">Trending</button></div><input placeholder="Search feedback" value="' + esc(state.feedbackSearch) + '" data-feedback-search><button class="btn btn-primary" data-new-feedback>＋ New post</button></div><div class="feedback-list">' + (posts || '<div class="card empty">No feedback matches these filters.</div>') + '</div></section><aside class="feedback-aside card"><span class="eyebrow">Categories</span><button class="' + (state.feedbackCategory === 'all' ? 'active' : '') + '" data-feedback-category="all">View all requests</button><button class="' + (state.feedbackCategory === 'feature' ? 'active' : '') + '" data-feedback-category="feature">💡 Feature requests</button><button class="' + (state.feedbackCategory === 'bug' ? 'active' : '') + '" data-feedback-category="bug">🐞 Bugs</button><div class="rail-divider"></div><span class="eyebrow">Most helpful</span>' + (leaders || '<p class="empty">Rankings will appear as members vote.</p>') + '</aside></div>', "Feedback");
 }
 
 function renderMemberProfile() {
@@ -360,7 +432,19 @@ function renderMemberProfile() {
     ? '<button class="btn" data-message-member="' + esc(p.id) + '">Message</button>'
     : '<button class="btn" disabled title="This member has paused new messages">Messages paused</button>');
   const safetyButton = p.is_self ? '' : '<button class="btn icon-btn" data-profile-options="' + esc(p.id) + '" aria-label="Profile safety options">•••</button>';
-  appShell('<button class="back-link" data-profile-back>← Back</button><section class="card public-profile"><div class="profile-cover"><span></span><span></span></div><div class="profile-main"><div class="profile-identity">' + avatarMarkup(p, "profile-avatar") + '<div><span class="eyebrow">FocusRoom profile</span><h1>' + esc(p.display_name) + '</h1><p>' + esc(p.subject || "Working toward a goal") + (p.country ? ' · ' + esc(p.country) : '') + '</p></div></div><div class="profile-actions">' + pinButton + messageButton + safetyButton + '</div></div><div class="profile-stats"><div><strong>' + Number(p.pinned_by_count || 0) + '</strong><span>Pinned by</span></div><div><strong>' + Number(p.pins_count || 0) + '</strong><span>Profiles pinned</span></div><div><strong>' + (joined || 'New') + '</strong><span>Joined</span></div></div><div class="profile-about"><span class="eyebrow">About</span><p>' + esc(p.bio || "This student has not added a bio yet.") + '</p></div></section><section class="profile-note"><span>Pin = follow</span><p>Pinning follows this study profile and adds one to their pinned count. You can unpin at any time.</p></section>', p.display_name);
+  const insight = state.memberInsights || {};
+  const currentStreak = Number(insight.current_streak || 0);
+  const badgeLevels = [[100,"Commons Legend","✦"],[60,"Quiet Power","◆"],[30,"Deep Roots","❋"],[14,"Steady Glow","☀"],[7,"Cozy Week","☕"],[3,"Soft Start","🌱"],[1,"First Light","◌"]];
+  const earned = badgeLevels.filter(function (badge) { return currentStreak >= badge[0]; });
+  const badges = badgeLevels.slice().reverse().map(function (badge) { return '<div class="achievement ' + (currentStreak >= badge[0] ? 'earned' : '') + '"><span>' + badge[2] + '</span><strong>' + badge[1] + '</strong><small>' + badge[0] + ' day streak</small></div>'; }).join("");
+  let tabContent = '<div class="profile-summary-grid"><article><span>Join date</span><strong>' + (joined || "New") + '</strong></article><article><span>Highest badge</span><strong>' + (earned[0] ? earned[0][2] + ' ' + earned[0][1] : "Just beginning") + '</strong></article><article><span>Pin count</span><strong>' + Number(p.pinned_by_count || 0) + '</strong></article></div><section class="profile-about"><span class="eyebrow">About</span><p>' + esc(p.bio || "This student has not added a bio yet.") + '</p></section>';
+  if (state.profileTab === "achievements") tabContent = '<div class="achievement-grid">' + badges + '</div>';
+  if (state.profileTab === "statistics") {
+    const days = Array.isArray(insight.last_7_days) ? insight.last_7_days : [];
+    const max = Math.max(1, ...days.map(function (day) { return Number(day.minutes || 0); }));
+    tabContent = '<div class="stat-hero"><div><span>Overall focus</span><strong>' + fmtMinutes(insight.total_minutes || 0) + '</strong></div><div><span>Best streak</span><strong>' + Number(insight.best_streak || 0) + ' days</strong></div><div><span>Current streak</span><strong>' + currentStreak + ' days</strong></div></div><div class="week-chart">' + days.map(function (day) { return '<div><span style="height:' + Math.max(5, Math.round(Number(day.minutes || 0) / max * 100)) + '%"></span><small>' + esc(String(day.day || day.date || "").slice(-5)) + '</small></div>'; }).join("") + '</div>';
+  }
+  appShell('<button class="back-link" data-profile-back>← Back</button><div class="profile-page-grid"><section class="card public-profile"><div class="profile-cover"><span></span><span></span></div><div class="profile-main"><div class="profile-identity">' + avatarMarkup(p, "profile-avatar") + '<div><span class="eyebrow">Mellow Commons profile</span><h1>' + esc(p.display_name) + '</h1><p>' + esc(p.subject || "Working toward a goal") + (p.country ? ' · ' + esc(p.country) : '') + '</p></div></div><div class="profile-actions">' + pinButton + messageButton + safetyButton + '</div></div><div class="profile-stats"><div><strong>' + Number(p.pinned_by_count || 0) + '</strong><span>Pinned by</span></div><div><strong>' + Number(p.pins_count || 0) + '</strong><span>Profiles pinned</span></div></div></section><section class="profile-details"><nav class="profile-tabs"><button class="' + (state.profileTab === 'summary' ? 'active' : '') + '" data-profile-tab="summary">Summary</button><button class="' + (state.profileTab === 'achievements' ? 'active' : '') + '" data-profile-tab="achievements">Achievements</button><button class="' + (state.profileTab === 'statistics' ? 'active' : '') + '" data-profile-tab="statistics">Statistics</button></nav><div class="card profile-tab-content">' + tabContent + '</div></section></div>', p.display_name);
 }
 
 function activeConversation() {
@@ -461,7 +545,9 @@ function renderMessages() {
 
 function renderProfile() {
   const p = state.profile;
-  appShell('<div class="page-head"><div><span class="eyebrow">Your public identity</span><h1>Build your study profile</h1><p>This is what signed-in members see when they click your name or picture.</p></div><button class="btn" data-member-profile="' + esc(p.id) + '">Preview profile</button></div><div class="profile-editor"><aside class="card profile-photo-card"><div class="profile-photo-preview">' + avatarMarkup(p, "profile-avatar") + '</div><h3>Profile picture</h3><p>JPG, PNG, or WebP · up to 4 MB. Your picture is public. Sexual, explicit, or hateful images are not allowed.</p><label class="btn btn-primary" for="avatarUpload">' + (p.avatar_path ? 'Change picture' : 'Upload picture') + '</label><input id="avatarUpload" type="file" accept="image/jpeg,image/png,image/webp" hidden>' + (p.avatar_path ? '<button class="btn btn-sm" data-remove-avatar>Remove picture</button>' : '') + '<span class="safety-copy">Members can report unsafe profile images for review.</span></aside><form class="card form" id="profileForm"><div class="field"><label>Display name</label><input name="display_name" minlength="2" maxlength="40" required value="' + esc(p.display_name) + '"></div><div class="field"><label>What are you studying?</label><input name="subject" maxlength="80" value="' + esc(p.subject) + '" placeholder="Biology, design, coding…"></div><div class="field"><label>Bio</label><textarea name="bio" maxlength="240" placeholder="A short introduction">' + esc(p.bio) + '</textarea></div><div class="field"><label>Country or region</label><input name="country" maxlength="60" value="' + esc(p.country) + '"></div><div class="field"><label>Profile color</label><input name="avatar_color" type="color" value="' + esc(p.avatar_color) + '"></div><button class="btn btn-primary">Save profile</button></form></div>', "Profile");
+  const frames = [["none","Simple"],["soft-glow","Soft glow"],["notebook","Notebook"],["mint-ring","Mint ring"],["moonlit","Moonlit ✦"],["garden","Garden ✦"],["aurora","Aurora ✦"]].map(function (frame) { return '<label class="cosmetic-option"><input type="radio" name="profile_frame" value="' + frame[0] + '"' + ((p.profile_frame || "none") === frame[0] ? ' checked' : '') + '><span class="frame-swatch frame-' + frame[0] + '"></span><small>' + frame[1] + '</small></label>'; }).join("");
+  const stickers = [["","None"],["moon","☾"],["sprout","🌱"],["sparkles","✦"],["books","📚"],["coffee","☕"],["flower","✿"]].map(function (sticker) { return '<label class="sticker-option"><input type="radio" name="profile_sticker" value="' + sticker[0] + '"' + ((p.profile_sticker || "") === sticker[0] ? ' checked' : '') + '><span>' + (sticker[1] || "None") + '</span></label>'; }).join("");
+  appShell('<div class="page-head"><div><span class="eyebrow">Your public identity</span><h1>Make the space feel like yours</h1><p>Your profile appears when another student clicks your picture or name.</p></div><button class="btn" data-member-profile="' + esc(p.id) + '">Preview profile</button></div><div class="profile-editor"><aside class="card profile-photo-card"><div class="profile-photo-preview">' + avatarMarkup(p, "profile-avatar") + '</div><h3>Profile picture</h3><p>JPG, PNG, or WebP · up to 4 MB. Sexual, explicit, hateful, or unsafe images are not allowed.</p><label class="btn btn-primary" for="avatarUpload">' + (p.avatar_path ? 'Change picture' : 'Upload picture') + '</label><input id="avatarUpload" type="file" accept="image/jpeg,image/png,image/webp" hidden>' + (p.avatar_path ? '<button class="btn btn-sm" data-remove-avatar>Remove picture</button>' : '') + '<span class="safety-copy">Members can report unsafe profile images for review.</span></aside><form class="card form" id="profileForm"><div class="field"><label>Display name</label><input name="display_name" minlength="2" maxlength="40" required value="' + esc(p.display_name) + '"></div><div class="field"><label>What are you studying?</label><input name="subject" maxlength="80" value="' + esc(p.subject) + '" placeholder="Biology, design, coding…"></div><div class="field"><label>Bio</label><textarea name="bio" maxlength="240" placeholder="A short introduction">' + esc(p.bio) + '</textarea></div><div class="field"><label>Country or region</label><input name="country" maxlength="60" value="' + esc(p.country) + '"></div><div class="field"><label>Profile color</label><input name="avatar_color" type="color" value="' + esc(p.avatar_color) + '"></div><div class="field"><label>Profile frame</label><div class="cosmetic-grid">' + frames + '</div><small>✦ frames are included with Premium and Buddy.</small></div><div class="field"><label>Profile sticker</label><div class="sticker-grid">' + stickers + '</div></div><button class="btn btn-primary">Save profile</button></form></div>', "Profile");
 }
 
 function toggleRow(name, title, description, checked) {
@@ -472,7 +558,7 @@ function renderSettings() {
   const p = state.profile;
   const prefs = state.preferences;
   const roomOptions = state.rooms.map(function (room) { return '<option value="' + esc(room.slug) + '"' + (prefs.defaultRoom === room.slug ? ' selected' : '') + '>' + esc(room.name) + '</option>'; }).join("");
-  appShell('<div class="page-head"><div><span class="eyebrow">You stay in control</span><h1>Privacy & settings</h1><p>Video and audio are handled by the call provider and are not stored by FocusRoom.</p></div></div><section class="card appearance-card"><div><span class="eyebrow">Website ambience</span><h3>Appearance</h3><p>Choose the atmosphere that feels best for your study space.</p></div><div class="theme-choice" role="group" aria-label="Website appearance"><button class="btn ' + (state.theme === "light" ? "active" : "") + '" data-theme="light">☀ Light</button><button class="btn ' + (state.theme === "dark" ? "active" : "") + '" data-theme="dark">☾ Dark</button></div></section><form class="card form" id="privacyForm" style="margin-top:18px">' +
+  appShell('<div class="page-head"><div><span class="eyebrow">You stay in control</span><h1>Privacy & settings</h1><p>Video and audio are handled by the call provider and are not stored by Mellow Commons.</p></div></div><section class="card appearance-card"><div><span class="eyebrow">Website ambience</span><h3>Appearance</h3><p>Choose the atmosphere that feels best for your study space.</p></div><div class="theme-choice" role="group" aria-label="Website appearance"><button class="btn ' + (state.theme === "light" ? "active" : "") + '" data-theme="light">☀ Light</button><button class="btn ' + (state.theme === "dark" ? "active" : "") + '" data-theme="dark">☾ Dark</button></div></section><form class="card form" id="privacyForm" style="margin-top:18px">' +
     toggleRow("show_profile", "Public member profile", "Allow signed-in members to see your name, bio, and subject.", p.show_profile) +
     toggleRow("show_country", "Show country", "Display your country or region on your profile.", p.show_country) +
     toggleRow("allow_invites", "Allow private-room invites", "Let other members invite you to private study calls.", p.allow_invites) +
@@ -538,7 +624,7 @@ function renderAdmin() {
 
 function renderApp() {
   if (!state.session) return renderLanding();
-  const renderers = { home:renderHome, rooms:renderRooms, goals:renderGoals, encouragements:renderEncouragements, messages:renderMessages, member:renderMemberProfile, private:renderPrivate, plus:renderPlus, blog:renderBlog, profile:renderProfile, settings:renderSettings, admin:renderAdmin };
+  const renderers = { home:renderHome, rooms:renderRooms, goals:renderGoals, encouragements:renderEncouragements, buddies:renderBuddies, community:renderCommunity, feedback:renderFeedback, messages:renderMessages, member:renderMemberProfile, private:renderPrivate, plus:renderPlus, blog:renderBlog, profile:renderProfile, settings:renderSettings, admin:renderAdmin };
   (renderers[state.view] || renderHome)();
 }
 
@@ -581,7 +667,11 @@ async function loadUserData() {
     supabase.from("private_rooms").select("*").order("created_at", { ascending:false }),
     supabase.rpc("list_dm_conversations"),
     supabase.rpc("list_pending_dm_calls"),
-    supabase.rpc("get_admin_access")
+    supabase.rpc("get_admin_access"),
+    supabase.from("community_channels").select("*").eq("active", true).order("sort_order"),
+    supabase.rpc("list_feedback_posts", { p_sort:"new", p_category:null, p_search:"", p_limit:100 }),
+    supabase.rpc("list_focus_buddy_posts", { p_subject:"", p_limit:100 }),
+    supabase.rpc("get_focus_room_allowance")
   ]);
   if (results[0].error) showToast(results[0].error.message, true);
   if (results[6].error) showToast(results[6].error.message, true);
@@ -599,8 +689,82 @@ async function loadUserData() {
   state.conversations = results[8].data || [];
   state.pendingDmCalls = results[9].data || [];
   state.admin = results[10].data && results[10].data[0] ? results[10].data[0] : null;
+  state.communityChannels = results[11].data || [];
+  state.activeChannelId = state.activeChannelId || (state.communityChannels[0] && state.communityChannels[0].id);
+  state.feedbackPosts = results[12].data || [];
+  state.buddyPosts = results[13].data || [];
+  if (results[14].data && results[14].data[0]) state.focusAllowance = results[14].data[0];
+  if (state.activeChannelId) await loadChannelMessages(state.activeChannelId);
   if (state.admin && state.admin.is_admin) await loadAdminData(state.adminSearch);
   await processInvite();
+}
+
+async function loadChannelMessages(channelId) {
+  if (!channelId) return;
+  const result = await supabase.rpc("list_channel_messages", { p_channel_id:channelId, p_limit:100, p_before:null });
+  if (result.error) return showToast(result.error.message, true);
+  state.channelMessages = (result.data || []).slice().reverse();
+  if (state.communityChannel) await supabase.removeChannel(state.communityChannel);
+  state.communityChannel = supabase.channel("mellow-channel-" + channelId)
+    .on("postgres_changes", { event:"INSERT", schema:"public", table:"channel_messages", filter:"channel_id=eq." + channelId }, async function () {
+      await loadChannelMessages(channelId);
+      if (state.view === "community") renderCommunity();
+    }).subscribe();
+}
+
+async function sendChannelMessage(form) {
+  const data = new FormData(form);
+  const result = await supabase.rpc("send_channel_message", { p_channel_id:data.get("channel_id"), p_body:String(data.get("body") || "").trim() });
+  if (result.error) return showToast(result.error.message, true);
+  form.reset();
+  await loadChannelMessages(data.get("channel_id"));
+  renderCommunity();
+}
+
+async function refreshFeedback() {
+  const result = await supabase.rpc("list_feedback_posts", { p_sort:state.feedbackSort, p_category:state.feedbackCategory === "all" ? null : state.feedbackCategory, p_search:state.feedbackSearch || "", p_limit:100 });
+  if (result.error) return showToast(result.error.message, true);
+  state.feedbackPosts = result.data || [];
+}
+
+function showFeedbackComposer() {
+  showModal("Share feedback", '<form class="form" id="feedbackForm"><div class="field"><label>Type</label><select name="category"><option value="feature">Feature request</option><option value="bug">Bug report</option></select></div><div class="field"><label>Title</label><input name="title" minlength="4" maxlength="120" required placeholder="A clear, searchable title"></div><div class="field"><label>Details</label><textarea name="body" minlength="8" maxlength="2000" required placeholder="What would be useful, or what went wrong?"></textarea></div><button class="btn btn-primary">Post feedback</button></form>');
+}
+
+async function submitFeedback(form) {
+  const data = new FormData(form);
+  const result = await supabase.rpc("create_feedback_post", { p_title:String(data.get("title") || "").trim(), p_body:String(data.get("body") || "").trim(), p_category:data.get("category") });
+  if (result.error) return showToast(result.error.message, true);
+  closeModal(); await refreshFeedback(); renderFeedback(); showToast("Feedback posted. Thank you.");
+}
+
+async function voteFeedback(postId) {
+  const result = await supabase.rpc("toggle_feedback_vote", { p_post_id:postId });
+  if (result.error) return showToast(result.error.message, true);
+  await refreshFeedback(); renderFeedback();
+}
+
+function showBuddyComposer() {
+  showModal("Find a study buddy", '<form class="form" id="buddyForm"><div class="field"><label>Post title</label><input name="title" minlength="4" maxlength="100" required placeholder="Looking for an evening revision buddy"></div><div class="field"><label>What are you working on?</label><input name="subject" maxlength="80" placeholder="Calculus, IELTS, portfolio…"></div><div class="field"><label>About your goal</label><textarea name="body" minlength="12" maxlength="1200" required placeholder="Share your schedule, goal, and the kind of accountability you want."></textarea></div><div class="settings-grid"><div class="field"><label>Timezone</label><input name="timezone" maxlength="60" value="' + esc(Intl.DateTimeFormat().resolvedOptions().timeZone || "") + '"></div><div class="field"><label>Study style</label><select name="study_mode"><option value="Quiet body doubling">Quiet body doubling</option><option value="Check-ins">Short check-ins</option><option value="Pomodoro">Pomodoro blocks</option><option value="Flexible">Flexible</option></select></div></div><button class="btn btn-primary">Publish post</button></form>');
+}
+
+async function submitBuddy(form) {
+  const data = new FormData(form);
+  const result = await supabase.rpc("create_focus_buddy_post", { p_title:String(data.get("title") || "").trim(), p_body:String(data.get("body") || "").trim(), p_subject:String(data.get("subject") || "").trim(), p_timezone:String(data.get("timezone") || "").trim(), p_study_mode:data.get("study_mode") });
+  if (result.error) return showToast(result.error.message, true);
+  closeModal(); await refreshBuddies(); renderBuddies(); showToast("Buddy post published.");
+}
+
+async function refreshBuddies() {
+  const result = await supabase.rpc("list_focus_buddy_posts", { p_subject:"", p_limit:100 });
+  if (result.error) return showToast(result.error.message, true);
+  state.buddyPosts = result.data || [];
+}
+
+async function closeBuddy(postId) {
+  const result = await supabase.rpc("close_focus_buddy_post", { p_post_id:postId });
+  if (result.error) return showToast(result.error.message, true);
+  await refreshBuddies(); renderBuddies(); showToast("Buddy post closed.");
 }
 
 async function loadAdminData(search) {
@@ -647,15 +811,22 @@ async function openMemberProfile(userId) {
   if (!userId) return;
   state.profileReturnView = state.view === "member" ? state.profileReturnView : state.view;
   state.memberProfile = null;
+  state.memberInsights = null;
+  state.profileTab = "summary";
   state.view = "member";
   renderMemberProfile();
-  const result = await supabase.rpc("get_member_profile", { p_member_id:userId });
+  const responses = await Promise.all([
+    supabase.rpc("get_member_profile", { p_member_id:userId }),
+    supabase.rpc("get_profile_insights", { p_member_id:userId })
+  ]);
+  const result = responses[0];
   if (result.error || !result.data || !result.data[0]) {
     state.view = state.profileReturnView || "encouragements";
     renderApp();
     return showToast(result.error ? result.error.message : "This profile is unavailable.", true);
   }
   state.memberProfile = result.data[0];
+  state.memberInsights = responses[1].data && responses[1].data[0] ? responses[1].data[0] : null;
   renderMemberProfile();
 }
 
@@ -739,7 +910,7 @@ function incomingCallPerson(call) {
   if (conversation) return conversationPerson(conversation);
   return {
     id:call.caller_id,
-    display_name:call.caller_display_name || "A FocusRoom member",
+    display_name:call.caller_display_name || "A Mellow Commons member",
     avatar_color:call.caller_avatar_color || "#7c6cff",
     avatar_path:call.caller_avatar_path || null
   };
@@ -756,7 +927,7 @@ function notifyNextIncomingCall() {
   }
   const person = incomingCallPerson(call);
   state.notifiedDmCalls.add(call.id);
-  showModal("Incoming " + (call.call_mode === "audio" ? "audio" : "video") + " call", '<div class="incoming-call"><div class="incoming-call-avatar">' + avatarMarkup(person, "profile-avatar") + '</div><h2>' + esc(person.display_name) + '</h2><p>is calling you privately on FocusRoom</p><div class="incoming-call-actions"><button class="btn" data-decline-dm-call="' + esc(call.id) + '">Decline</button><button class="btn btn-primary" data-answer-dm-call="' + esc(call.id) + '">Accept</button></div></div>');
+  showModal("Incoming " + (call.call_mode === "audio" ? "audio" : "video") + " call", '<div class="incoming-call"><div class="incoming-call-avatar">' + avatarMarkup(person, "profile-avatar") + '</div><h2>' + esc(person.display_name) + '</h2><p>is calling you privately on Mellow Commons</p><div class="incoming-call-actions"><button class="btn" data-decline-dm-call="' + esc(call.id) + '">Decline</button><button class="btn btn-primary" data-answer-dm-call="' + esc(call.id) + '">Accept</button></div></div>');
 }
 
 function subscribeToDmCalls() {
@@ -792,7 +963,7 @@ function dmCallRoom(call, person) {
   return {
     id:call.room_id,
     title:(call.call_mode === "audio" ? "Audio call with " : "Video call with ") + (person && person.display_name || "study partner"),
-    description:"A private one-to-one FocusRoom call.",
+    description:"A private one-to-one Mellow Commons call.",
     call_mode:call.call_mode,
     jitsi_room:call.jitsi_room,
     dm_call_id:call.id
@@ -1005,7 +1176,7 @@ async function removeAvatar() {
 
 function showReportModal(userId, messageId) {
   const context = messageId ? "message" : "profile";
-  showModal(messageId ? "Report message" : "Profile safety", '<form class="form" id="reportMemberForm"><input type="hidden" name="user_id" value="' + esc(userId) + '"><input type="hidden" name="message_id" value="' + esc(messageId || "") + '"><input type="hidden" name="context" value="' + context + '"><p>Reports are private. Add enough detail for the FocusRoom team to review the issue.</p><div class="field"><label>What happened?</label><textarea name="reason" minlength="3" maxlength="500" required placeholder="Describe the unsafe image, profile, or message"></textarea></div><button class="btn btn-primary">Send report</button></form><div class="modal-safety"><strong>Need distance now?</strong><p>Blocking hides this member’s profile and ends access to your conversation.</p><button class="btn btn-danger" data-block-member="' + esc(userId) + '">Block member</button></div>');
+  showModal(messageId ? "Report message" : "Profile safety", '<form class="form" id="reportMemberForm"><input type="hidden" name="user_id" value="' + esc(userId) + '"><input type="hidden" name="message_id" value="' + esc(messageId || "") + '"><input type="hidden" name="context" value="' + context + '"><p>Reports are private. Add enough detail for the Mellow Commons team to review the issue.</p><div class="field"><label>What happened?</label><textarea name="reason" minlength="3" maxlength="500" required placeholder="Describe the unsafe image, profile, or message"></textarea></div><button class="btn btn-primary">Send report</button></form><div class="modal-safety"><strong>Need distance now?</strong><p>Blocking hides this member’s profile and ends access to your conversation.</p><button class="btn btn-danger" data-block-member="' + esc(userId) + '">Block member</button></div>');
 }
 
 async function submitMemberReport(form) {
@@ -1018,7 +1189,7 @@ async function submitMemberReport(form) {
   });
   if (result.error) return showToast(result.error.message, true);
   closeModal();
-  showToast("Report sent. Thank you for helping keep FocusRoom safe.");
+  showToast("Report sent. Thank you for helping keep Mellow Commons safe.");
 }
 
 async function blockMember(userId) {
@@ -1044,11 +1215,11 @@ async function handleAuthSubmit(form) {
   button.textContent = "Please wait…";
   if (state.authMode === "signup") {
     const displayName = String(data.get("displayName")).trim();
-    const result = await supabase.auth.signUp({ email:email, password:password, options:{ data:{ display_name:displayName }, emailRedirectTo:location.origin + location.pathname } });
+    const result = await supabase.auth.signUp({ email:email, password:password, options:{ data:{ display_name:displayName }, emailRedirectTo:authReturnUrl() } });
     if (result.error) showToast(result.error.message, true);
     else if (!result.data.session) {
       state.pendingVerificationEmail = email;
-      showModal("Check your email", '<p>We sent a confirmation link to <strong>' + esc(email) + '</strong>. Open it to activate your FocusRoom account.</p><p class="form-note">Check Spam and Promotions. If the link says it was already used, request a fresh one below—some email security scanners can open single-use links before you do.</p><button class="btn" data-resend-email>Resend verification</button> <button class="btn btn-primary" data-close-modal>Got it</button>');
+      showModal("Check your email", '<p>We sent a confirmation link to <strong>' + esc(email) + '</strong>. Open it to activate your Mellow Commons account.</p><p class="form-note">Check Spam and Promotions. If the link says it was already used, request a fresh one below—some email security scanners can open single-use links before you do.</p><button class="btn" data-resend-email>Resend verification</button> <button class="btn btn-primary" data-close-modal>Got it</button>');
       button.disabled = false; button.textContent = "Create free account";
     }
   } else {
@@ -1060,11 +1231,38 @@ async function handleAuthSubmit(form) {
 async function resendVerification(email) {
   const address = String(email || state.pendingVerificationEmail || "").trim();
   if (!address) return showToast("Enter the email address you registered with.", true);
-  const result = await supabase.auth.resend({ type:"signup", email:address, options:{ emailRedirectTo:location.origin + location.pathname } });
+  const result = await supabase.auth.resend({ type:"signup", email:address, options:{ emailRedirectTo:authReturnUrl() } });
   if (result.error) return showToast(result.error.message, true);
   state.pendingVerificationEmail = address;
   closeModal();
   showToast("A fresh verification email was sent. Check Spam and Promotions too.");
+}
+
+async function signInWithGoogle() {
+  const result = await supabase.auth.signInWithOAuth({ provider:"google", options:{ redirectTo:authReturnUrl(), queryParams:{ prompt:"select_account" } } });
+  if (result.error) showToast(result.error.message, true);
+}
+
+function showPasswordReset() {
+  showModal("Reset your password", '<form id="passwordResetForm" class="form"><p>Enter your email and we’ll send a secure recovery link.</p><div class="field"><label>Email address</label><input name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><button class="btn btn-primary">Send reset link</button></form>');
+}
+
+async function requestPasswordReset(form) {
+  const email = String(new FormData(form).get("email") || "").trim();
+  const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo:authReturnUrl() });
+  if (result.error) return showToast(result.error.message, true);
+  closeModal(); showToast("Password reset link sent.");
+}
+
+function showNewPassword() {
+  showModal("Choose a new password", '<form id="newPasswordForm" class="form"><div class="field"><label>New password</label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div><button class="btn btn-primary">Update password</button></form>');
+}
+
+async function updatePassword(form) {
+  const password = String(new FormData(form).get("password") || "");
+  const result = await supabase.auth.updateUser({ password:password });
+  if (result.error) return showToast(result.error.message, true);
+  closeModal(); showToast("Password updated.");
 }
 
 async function saveGoal(title) {
@@ -1158,7 +1356,7 @@ function showJoinLobby(room, isPrivate) {
   state.pendingRoom = room;
   state.pendingPrivate = Boolean(isPrivate);
   const draft = state.joinDraft;
-  showModal("Set up your session", '<form id="joinLobbyForm" class="join-lobby"><div class="lobby-grid"><div class="device-panel"><div class="video-preview-wrap"><video id="devicePreview" autoplay muted playsinline></video><div class="video-placeholder" id="videoPlaceholder"><span>◉</span><strong>Preview is off</strong><small>Nothing is shared until you join</small></div><div class="mic-meter" aria-label="Microphone level"><i id="micLevel"></i></div></div><button class="btn device-check-btn" type="button" data-check-devices>Test camera & microphone</button><p class="device-status" id="deviceStatus">You can also join with both off.</p></div><div class="lobby-options"><span class="eyebrow">' + (isPrivate ? 'Private room' : 'Public focus room') + '</span><h3>' + esc(room.name || room.title) + '</h3><p>' + esc(room.description || (room.call_mode === "audio" ? "Invite-only audio study call." : "Invite-only video study call.")) + '</p><div class="field"><label for="sessionIntention">What will you finish?</label><input id="sessionIntention" name="intention" maxlength="100" value="' + esc(draft.intention) + '" placeholder="One clear task"></div><div class="field"><label for="sessionDuration">Focus block</label><select id="sessionDuration" name="duration"><option value="25"' + (draft.duration === 25 ? ' selected' : '') + '>25 minutes</option><option value="50"' + (draft.duration === 50 ? ' selected' : '') + '>50 minutes</option><option value="90"' + (draft.duration === 90 ? ' selected' : '') + '>90 minutes</option></select></div><div class="device-switches"><label><input type="checkbox" name="camera" data-media-toggle="camera"' + (draft.camera ? ' checked' : '') + '><span>Camera</span><small id="cameraState">' + (draft.camera ? 'On' : 'Off') + '</small></label><label><input type="checkbox" name="microphone" data-media-toggle="microphone"' + (draft.microphone ? ' checked' : '') + '><span>Microphone</span><small id="microphoneState">' + (draft.microphone ? 'On' : 'Off') + '</small></label></div><div class="device-selects" id="deviceSelects"><div class="field"><label>Camera</label><select name="cameraDevice" disabled><option>Run device test first</option></select></div><div class="field"><label>Microphone</label><select name="microphoneDevice" disabled><option>Run device test first</option></select></div></div></div></div><div class="lobby-footer"><p><strong>Privacy:</strong> your preview stays on this device. FocusRoom does not record calls.</p><div><button type="button" class="btn" data-close-modal>Cancel</button> <button class="btn btn-primary" type="submit">Join room →</button></div></div></form>', true);
+  showModal("Set up your session", '<form id="joinLobbyForm" class="join-lobby"><div class="lobby-grid"><div class="device-panel"><div class="video-preview-wrap"><video id="devicePreview" autoplay muted playsinline></video><div class="video-placeholder" id="videoPlaceholder"><span>◉</span><strong>Preview is off</strong><small>Nothing is shared until you join</small></div><div class="mic-meter" aria-label="Microphone level"><i id="micLevel"></i></div></div><button class="btn device-check-btn" type="button" data-check-devices>Test camera & microphone</button><p class="device-status" id="deviceStatus">You can also join with both off.</p></div><div class="lobby-options"><span class="eyebrow">' + (isPrivate ? 'Private room' : 'Public focus room') + '</span><h3>' + esc(room.name || room.title) + '</h3><p>' + esc(room.description || (room.call_mode === "audio" ? "Invite-only audio study call." : "Invite-only video study call.")) + '</p><div class="field"><label for="sessionIntention">What will you finish?</label><input id="sessionIntention" name="intention" maxlength="100" value="' + esc(draft.intention) + '" placeholder="One clear task"></div><div class="field"><label for="sessionDuration">Focus block</label><select id="sessionDuration" name="duration"><option value="25"' + (draft.duration === 25 ? ' selected' : '') + '>25 minutes</option><option value="50"' + (draft.duration === 50 ? ' selected' : '') + '>50 minutes</option><option value="90"' + (draft.duration === 90 ? ' selected' : '') + '>90 minutes</option></select></div><div class="device-switches"><label><input type="checkbox" name="camera" data-media-toggle="camera"' + (draft.camera ? ' checked' : '') + '><span>Camera</span><small id="cameraState">' + (draft.camera ? 'On' : 'Off') + '</small></label><label><input type="checkbox" name="microphone" data-media-toggle="microphone"' + (draft.microphone ? ' checked' : '') + '><span>Microphone</span><small id="microphoneState">' + (draft.microphone ? 'On' : 'Off') + '</small></label></div><div class="device-selects" id="deviceSelects"><div class="field"><label>Camera</label><select name="cameraDevice" disabled><option>Run device test first</option></select></div><div class="field"><label>Microphone</label><select name="microphoneDevice" disabled><option>Run device test first</option></select></div></div></div></div><div class="lobby-footer"><p><strong>Privacy:</strong> your preview stays on this device. Mellow Commons does not record calls.</p><div><button type="button" class="btn" data-close-modal>Cancel</button> <button class="btn btn-primary" type="submit">Join room →</button></div></div></form>', true);
 }
 
 async function populateDeviceSelectors() {
@@ -1263,14 +1461,77 @@ async function ensureJitsi() {
   });
 }
 
+async function beginFocusVisit(room, isPrivate) {
+  if (isPrivate || room.dm_call_id) return true;
+  const result = await supabase.rpc("start_focus_room_visit", { p_room_id:room.id });
+  if (result.error || !result.data || !result.data[0]) {
+    showToast(result.error ? result.error.message : "Your public room time is unavailable.", true);
+    return false;
+  }
+  const visit = result.data[0];
+  state.focusVisitId = visit.visit_id;
+  state.focusAllowance = Object.assign({}, state.focusAllowance, visit);
+  clearInterval(state.focusHeartbeat);
+  state.focusHeartbeat = setInterval(heartbeatFocusVisit, 30000);
+  return true;
+}
+
+async function heartbeatFocusVisit() {
+  if (!state.focusVisitId || state.focusHeartbeatBusy) return;
+  state.focusHeartbeatBusy = true;
+  const result = await supabase.rpc("heartbeat_focus_room_visit", { p_visit_id:state.focusVisitId });
+  state.focusHeartbeatBusy = false;
+  if (result.error || !result.data || !result.data[0]) return;
+  const allowance = result.data[0];
+  state.focusAllowance = Object.assign({}, state.focusAllowance, allowance);
+  const remaining = document.querySelector("#meetingAllowance");
+  if (remaining) remaining.textContent = allowance.is_unlimited ? "Unlimited room time" : fmtMinutes(Math.ceil(Number(allowance.remaining_seconds || 0) / 60)) + " left today";
+  if (!allowance.allowed) {
+    await leaveMeeting();
+    state.view = "plus";
+    renderPlus();
+    showToast("You reached today’s public focus-room limit. Your goals and timer still remain available.", true);
+  }
+}
+
+async function endFocusVisit() {
+  clearInterval(state.focusHeartbeat);
+  state.focusHeartbeat = null;
+  const visitId = state.focusVisitId;
+  state.focusVisitId = null;
+  if (visitId) await supabase.rpc("end_focus_room_visit", { p_visit_id:visitId });
+  const result = await supabase.rpc("get_focus_room_allowance");
+  if (result.data && result.data[0]) state.focusAllowance = result.data[0];
+}
+
+function showMeetingDecorations() {
+  const frames = [["none","None"],["soft-glow","Soft glow"],["notebook","Notebook"],["mint-ring","Mint ring"],["moonlit","Moonlit"],["garden","Garden"],["aurora","Aurora"]].map(function (frame) { return '<label class="cosmetic-option"><input type="radio" name="frame" value="' + frame[0] + '"' + (state.meetingFrame === frame[0] ? ' checked' : '') + '><span class="frame-swatch frame-' + frame[0] + '"></span><small>' + frame[1] + '</small></label>'; }).join("");
+  const stickers = [["","None"],["moon","☾"],["sprout","🌱"],["sparkles","✦"],["books","📚"],["coffee","☕"],["flower","✿"]].map(function (sticker) { return '<label class="sticker-option"><input type="radio" name="sticker" value="' + sticker[0] + '"' + (state.meetingSticker === sticker[0] ? ' checked' : '') + '><span>' + sticker[1] + '</span></label>'; }).join("");
+  showModal("Room decorations", '<form id="meetingDecorForm" class="form"><p>Choose a cozy border and corner sticker for your own study-room screen. This decoration does not alter the video you send.</p><div class="field"><label>Frame</label><div class="cosmetic-grid">' + frames + '</div></div><div class="field"><label>Sticker</label><div class="sticker-grid">' + stickers + '</div></div><button class="btn btn-primary">Apply decoration</button></form>');
+}
+
+function saveMeetingDecorations(form) {
+  const data = new FormData(form);
+  state.meetingFrame = String(data.get("frame") || "none");
+  state.meetingSticker = String(data.get("sticker") || "");
+  localStorage.setItem("mellow-meeting-frame", state.meetingFrame);
+  localStorage.setItem("mellow-meeting-sticker", state.meetingSticker);
+  const page = document.querySelector(".meeting-page");
+  if (page) page.dataset.frame = state.meetingFrame;
+  const sticker = document.querySelector("#meetingSticker");
+  if (sticker) sticker.textContent = stickerGlyph(state.meetingSticker);
+  closeModal(); showToast("Room decoration applied.");
+}
+
 async function mountMeeting(room, isPrivate, joinOptions) {
   const options = joinOptions || state.joinDraft;
+  if (!(await beginFocusVisit(room, isPrivate))) { state.view = "plus"; renderPlus(); return; }
   state.activeRoom = room;
   state.activeDmCallId = room.dm_call_id || null;
   state.timerPreset = Number(options.duration || 50);
   state.timerSeconds = state.timerPreset * 60;
   const directUrl = "https://meet.jit.si/" + encodeURIComponent(room.jitsi_room);
-  app.insertAdjacentHTML("beforeend", '<section class="meeting-page"><header class="meeting-head"><button class="btn btn-sm" data-leave-meeting>← Leave</button><div class="meeting-context"><h3>' + esc(room.name || room.title) + '</h3><span>' + esc(options.intention || "Focus session") + ' · ' + state.timerPreset + ' min</span></div><span class="meeting-status" id="meetingStatus">Opening room…</span><a class="btn btn-sm" href="' + directUrl + '" target="_blank" rel="noopener noreferrer">Open separately ↗</a></header><div id="jitsiMount"></div></section>');
+  app.insertAdjacentHTML("beforeend", '<section class="meeting-page" data-frame="' + esc(state.meetingFrame) + '"><header class="meeting-head"><button class="btn btn-sm" data-leave-meeting>← Finish session</button><div class="meeting-context"><h3>' + esc(room.name || room.title) + '</h3><span>' + esc(options.intention || "Focus session") + ' · ' + state.timerPreset + ' min</span></div><span class="meeting-status" id="meetingStatus">Opening room…</span><span class="meeting-allowance" id="meetingAllowance">' + (state.focusAllowance.is_unlimited ? 'Unlimited room time' : fmtMinutes(Math.ceil(Number(state.focusAllowance.remaining_seconds || 0) / 60)) + ' left today') + '</span><a class="btn btn-sm" href="' + directUrl + '" target="_blank" rel="noopener noreferrer">Open separately ↗</a></header><nav class="meeting-tools" aria-label="Room controls"><button data-meeting-command="toggleAudio">Mic</button><button data-meeting-command="toggleVideo">Camera</button><button data-meeting-command="toggleChat">Chat</button><button data-meeting-command="toggleTileView">Grid</button><button data-meeting-fullscreen>Fullscreen</button><button data-meeting-decorate>Decorate ✦</button></nav><div class="meeting-focusbar"><span>Current intention</span><strong>' + esc(options.intention || "Focus session") + '</strong><span class="meeting-timer">' + state.timerPreset + ':00</span></div><div id="jitsiMount"></div><span id="meetingSticker" class="meeting-sticker">' + stickerGlyph(state.meetingSticker) + '</span></section>');
   const ready = await ensureJitsi();
   if (!ready) {
     document.querySelector("#jitsiMount").innerHTML = '<div class="meeting-error"><h2>Open the room directly</h2><p>Your browser blocked the embedded call. The same live camera room can still open securely in Jitsi.</p><a class="btn btn-primary" href="' + directUrl + '" target="_blank" rel="noopener noreferrer">Open camera room</a><p class="form-note">Camera and microphone permissions are controlled by your browser.</p></div>'; return;
@@ -1291,6 +1552,7 @@ async function mountMeeting(room, isPrivate, joinOptions) {
         useHostPageLocalStorage: true
       },
       interfaceConfigOverwrite: { MOBILE_APP_PROMO:false, SHOW_JITSI_WATERMARK:false }
+      ,toolbarButtons:["microphone","camera","closedcaptions","desktop","fullscreen","hangup","profile","chat","settings","raisehand","videoquality","filmstrip","tileview","videobackgroundblur","select-background","participants-pane","security","stats","shortcuts","noise-suppression"]
     });
     state.jitsi.addListener("videoConferenceJoined", function () {
       const status = document.querySelector("#meetingStatus"); if (status) status.textContent = "Connected";
@@ -1317,18 +1579,22 @@ function trackPresence(room, isPrivate) {
 }
 
 async function leaveMeeting(endCall) {
+  if (state.leavingMeeting) return;
+  state.leavingMeeting = true;
   const dmCallId = state.activeDmCallId;
   state.activeDmCallId = null;
   if (state.presenceChannel) { await state.presenceChannel.untrack(); await supabase.removeChannel(state.presenceChannel); state.presenceChannel = null; }
   if (state.jitsi) { state.jitsi.dispose(); state.jitsi = null; }
   state.activeRoom = null;
   document.querySelector(".meeting-page")?.remove();
+  await endFocusVisit();
   if (dmCallId && endCall !== false) {
     const result = await supabase.rpc("end_dm_call", { p_call_id:dmCallId });
     if (result.error) showToast(result.error.message, true);
     if (state.activeConversationId) await loadDmCalls(state.activeConversationId);
     if (state.view === "messages") renderMessages();
   }
+  state.leavingMeeting = false;
 }
 
 async function sendEncouragement(userId, kind) {
@@ -1371,7 +1637,7 @@ async function saveProfile(form, privacyOnly) {
   if (privacyOnly) {
     update = { show_profile:data.has("show_profile"), show_country:data.has("show_country"), allow_invites:data.has("allow_invites"), accepting_dms:data.has("accepting_dms"), accepting_encouragements:data.has("accepting_encouragements") };
   } else {
-    update = { display_name:String(data.get("display_name")).trim(), subject:String(data.get("subject")).trim(), bio:String(data.get("bio")).trim(), country:String(data.get("country")).trim(), avatar_color:data.get("avatar_color") };
+    update = { display_name:String(data.get("display_name")).trim(), subject:String(data.get("subject")).trim(), bio:String(data.get("bio")).trim(), country:String(data.get("country")).trim(), avatar_color:data.get("avatar_color"), profile_frame:data.get("profile_frame") || "none", profile_sticker:data.get("profile_sticker") || "" };
   }
   const result = await supabase.from("profiles").update(update).eq("id", state.user.id).select().single();
   if (result.error) return showToast(result.error.message, true);
@@ -1391,7 +1657,7 @@ function saveStudyPreferences(form) {
   state.joinDraft.duration = state.preferences.defaultDuration;
   state.joinDraft.camera = state.preferences.defaultCamera;
   state.joinDraft.microphone = state.preferences.defaultMicrophone;
-  localStorage.setItem("focusroom-study-preferences", JSON.stringify(state.preferences));
+  localStorage.setItem("mellow-commons-study-preferences", JSON.stringify(state.preferences));
   document.documentElement.classList.toggle("compact-mode", state.preferences.compactMode);
   showToast("Study preferences saved.");
   renderSettings();
@@ -1406,7 +1672,7 @@ async function saveAdminEntitlement(userId) {
     p_user_id:userId,
     p_tier:select.value,
     p_expires_at:null,
-    p_reason:"Granted from the FocusRoom admin center"
+    p_reason:"Granted from the Mellow Commons admin center"
   });
   if (result.error) return showToast(result.error.message, true);
   await loadAdminData(state.adminSearch);
@@ -1418,7 +1684,7 @@ async function updateAdminReport(reportId, status) {
   const result = await supabase.rpc("admin_update_report", {
     p_report_id:reportId,
     p_status:status,
-    p_note:"Updated from the FocusRoom admin center"
+    p_note:"Updated from the Mellow Commons admin center"
   });
   if (result.error) return showToast(result.error.message, true);
   await loadAdminData(state.adminSearch);
@@ -1457,7 +1723,7 @@ function checkout(interval) {
 }
 
 function showPrivacy() {
-  showModal("FocusRoom privacy summary", '<div class="article-body"><h3>Your account data</h3><p>FocusRoom stores your account, profile, goals, sessions, plan status, privacy choices, and encouragement activity in Supabase. Row-level rules limit personal data to the correct account.</p><h3>Camera and microphone</h3><p>Calls are provided through Jitsi. FocusRoom does not record or store your call video or audio. Your browser asks for permission, and calls begin with camera and microphone off.</p><h3>Public and private rooms</h3><p>Public study rooms are open to signed-in members. Private rooms require an unguessable invite and expire after 24 hours. Do not share an invite publicly.</p><h3>Payments</h3><p>When enabled, Stripe processes card and Apple Pay details. FocusRoom stores subscription status but never stores full payment-card details.</p></div>', true);
+  showModal("Mellow Commons privacy summary", '<div class="article-body"><h3>Your account data</h3><p>Mellow Commons stores your account, profile, goals, sessions, plan status, privacy choices, and encouragement activity in Supabase. Row-level rules limit personal data to the correct account.</p><h3>Camera and microphone</h3><p>Calls are provided through Jitsi. Mellow Commons does not record or store your call video or audio. Your browser asks for permission, and calls begin with camera and microphone off.</p><h3>Public and private rooms</h3><p>Public study rooms are open to signed-in members. Private rooms require an unguessable invite and expire after 24 hours. Do not share an invite publicly.</p><h3>Payments</h3><p>When enabled, Stripe processes card and Apple Pay details. Mellow Commons stores subscription status but never stores full payment-card details.</p></div>', true);
 }
 
 function showBlog(id) {
@@ -1502,9 +1768,23 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.publicHome !== undefined) { event.preventDefault(); state.session ? (state.view = "home", renderApp()) : renderLanding(); }
   if (target.dataset.auth) { state.authMode = target.dataset.auth; renderAuth(); }
   if (target.dataset.authTab) { state.authMode = target.dataset.authTab; renderAuth(); }
+  if (target.dataset.googleAuth !== undefined) await signInWithGoogle();
+  if (target.dataset.passwordToggle !== undefined) { const field = document.querySelector("#password"); if (field) { field.type = field.type === "password" ? "text" : "password"; target.textContent = field.type === "password" ? "Show" : "Hide"; } }
+  if (target.dataset.forgotPassword !== undefined) showPasswordReset();
   if (target.dataset.openResend !== undefined) showModal("Resend verification", '<form id="resendForm" class="form"><div class="field"><label for="resendEmail">Account email</label><input id="resendEmail" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><button class="btn btn-primary">Send a fresh link</button></form>');
   if (target.dataset.resendEmail !== undefined) await resendVerification();
-  if (target.dataset.view) { state.view = target.dataset.view; state.mobileNav = false; renderApp(); }
+  if (target.dataset.toggleAccount !== undefined) { state.accountMenuOpen = !state.accountMenuOpen; state.chatMenuOpen = false; renderApp(); }
+  if (target.dataset.toggleChat !== undefined) { state.chatMenuOpen = !state.chatMenuOpen; state.accountMenuOpen = false; renderApp(); }
+  if (target.dataset.view) { state.view = target.dataset.view; state.mobileNav = false; state.accountMenuOpen = false; state.chatMenuOpen = false; renderApp(); }
+  if (target.dataset.channel) { state.activeChannelId = target.dataset.channel; await loadChannelMessages(state.activeChannelId); renderCommunity(); }
+  if (target.dataset.channelSlug) { const channel = state.communityChannels.find(function (item) { return item.slug === target.dataset.channelSlug; }); if (channel) { state.activeChannelId = channel.id; state.view = "community"; state.chatMenuOpen = false; await loadChannelMessages(channel.id); renderCommunity(); } }
+  if (target.dataset.newBuddy !== undefined) showBuddyComposer();
+  if (target.dataset.closeBuddy) await closeBuddy(target.dataset.closeBuddy);
+  if (target.dataset.newFeedback !== undefined) showFeedbackComposer();
+  if (target.dataset.feedbackVote) await voteFeedback(target.dataset.feedbackVote);
+  if (target.dataset.feedbackSort) { state.feedbackSort = target.dataset.feedbackSort; await refreshFeedback(); renderFeedback(); }
+  if (target.dataset.feedbackCategory) { state.feedbackCategory = target.dataset.feedbackCategory; await refreshFeedback(); renderFeedback(); }
+  if (target.dataset.profileTab) { state.profileTab = target.dataset.profileTab; renderMemberProfile(); }
   if (target.dataset.memberProfile) await openMemberProfile(target.dataset.memberProfile);
   if (target.dataset.profileBack !== undefined) { state.view = state.profileReturnView || "encouragements"; state.memberProfile = null; renderApp(); }
   if (target.dataset.pinMember) await togglePin(target.dataset.pinMember, true);
@@ -1529,6 +1809,9 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.joinRoom) await joinPublicRoom(target.dataset.joinRoom);
   if (target.dataset.checkDevices !== undefined) await checkDevices();
   if (target.dataset.leaveMeeting !== undefined) await leaveMeeting();
+  if (target.dataset.meetingCommand && state.jitsi) state.jitsi.executeCommand(target.dataset.meetingCommand);
+  if (target.dataset.meetingFullscreen !== undefined) { const page = document.querySelector(".meeting-page"); if (page) { if (document.fullscreenElement) document.exitFullscreen(); else page.requestFullscreen(); } }
+  if (target.dataset.meetingDecorate !== undefined) showMeetingDecorations();
   if (target.dataset.goalDelete) await deleteGoal(target.dataset.goalDelete);
   if (target.dataset.timerPreset) setTimerPreset(Number(target.dataset.timerPreset));
   if (target.dataset.timerToggle !== undefined) toggleTimer();
@@ -1552,6 +1835,8 @@ document.addEventListener("change", async function (event) {
   if (event.target.dataset.mediaToggle) togglePreviewTrack(event.target.dataset.mediaToggle, event.target.checked);
   if (event.target.id === "avatarUpload") { await uploadAvatar(event.target.files && event.target.files[0]); event.target.value = ""; }
   if (event.target.id === "dmMediaInput") { await uploadDmAttachment(event.target.files && event.target.files[0], "image"); event.target.value = ""; }
+  if (event.target.dataset.buddySearch !== undefined) { state.buddySearch = event.target.value; renderBuddies(); }
+  if (event.target.dataset.feedbackSearch !== undefined) { state.feedbackSearch = event.target.value; await refreshFeedback(); renderFeedback(); }
 });
 
 document.addEventListener("submit", async function (event) {
@@ -1559,6 +1844,12 @@ document.addEventListener("submit", async function (event) {
   const form = event.target;
   if (form.id === "authForm") await handleAuthSubmit(form);
   if (form.id === "resendForm") { const data = new FormData(form); await resendVerification(data.get("email")); }
+  if (form.id === "passwordResetForm") await requestPasswordReset(form);
+  if (form.id === "newPasswordForm") await updatePassword(form);
+  if (form.id === "channelMessageForm") await sendChannelMessage(form);
+  if (form.id === "feedbackForm") await submitFeedback(form);
+  if (form.id === "buddyForm") await submitBuddy(form);
+  if (form.id === "meetingDecorForm") saveMeetingDecorations(form);
   if (form.id === "quickSessionForm") {
     const data = new FormData(form);
     state.joinDraft.intention = String(data.get("intention") || "").trim();
@@ -1602,6 +1893,8 @@ window.addEventListener("beforeunload", function () {
   if (state.presenceChannel) state.presenceChannel.untrack();
   if (state.dmChannel) supabase.removeChannel(state.dmChannel);
   if (state.dmCallChannel) supabase.removeChannel(state.dmCallChannel);
+  if (state.communityChannel) supabase.removeChannel(state.communityChannel);
+  if (state.focusVisitId) supabase.rpc("end_focus_room_visit", { p_visit_id:state.focusVisitId });
   if (state.voiceStream) state.voiceStream.getTracks().forEach(function (track) { track.stop(); });
   stopAmbient();
 });
@@ -1617,12 +1910,14 @@ async function init() {
   if (state.session) { subscribeToDmCalls(); notifyNextIncomingCall(); }
   supabase.auth.onAuthStateChange(function (event, session) {
     setTimeout(async function () {
+      if (event === "PASSWORD_RECOVERY") { state.session = session; state.user = session && session.user; showNewPassword(); return; }
       state.session = session; state.user = session && session.user;
       if (session) { await loadUserData(); state.view = "home"; }
       else {
         if (state.dmChannel) { await supabase.removeChannel(state.dmChannel); state.dmChannel = null; }
         if (state.dmCallChannel) { await supabase.removeChannel(state.dmCallChannel); state.dmCallChannel = null; }
-        state.profile = null; state.memberProfile = null; state.conversations = []; state.messages = []; state.dmCalls = []; state.pendingDmCalls = []; state.activeDmCallId = null; state.admin = null; state.adminStats = null; state.adminMembers = []; state.adminReports = []; state.adminRooms = []; state.view = "home";
+        if (state.communityChannel) { await supabase.removeChannel(state.communityChannel); state.communityChannel = null; }
+        state.profile = null; state.memberProfile = null; state.memberInsights = null; state.conversations = []; state.messages = []; state.dmCalls = []; state.pendingDmCalls = []; state.activeDmCallId = null; state.communityChannels = []; state.channelMessages = []; state.feedbackPosts = []; state.buddyPosts = []; state.admin = null; state.adminStats = null; state.adminMembers = []; state.adminReports = []; state.adminRooms = []; state.view = "home";
       }
       renderApp();
       if (session) { subscribeToDmCalls(); notifyNextIncomingCall(); }
@@ -1632,5 +1927,5 @@ async function init() {
 
 init().catch(function (error) {
   console.error(error);
-  app.innerHTML = baseBackground() + '<main class="auth-shell"><section class="card auth-card"><h1>FocusRoom could not start</h1><p>' + esc(error.message) + '</p><button class="btn btn-primary" onclick="location.reload()">Try again</button></section></main>';
+  app.innerHTML = baseBackground() + '<main class="auth-shell"><section class="card auth-card"><h1>Mellow Commons could not start</h1><p>' + esc(error.message) + '</p><button class="btn btn-primary" onclick="location.reload()">Try again</button></section></main>';
 });
