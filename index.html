@@ -3,6 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    (function () {
+      var saved = localStorage.getItem("focusroom-theme");
+      var theme = saved === "light" || saved === "dark"
+        ? saved
+        : (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.dataset.theme = theme;
+    }());
+  </script>
   <meta name="theme-color" content="#090b12">
   <meta name="description" content="FocusRoom is a free live study community with video focus rooms, timers, goals, profiles, and privacy controls.">
   <title>FocusRoom — Study together</title>
