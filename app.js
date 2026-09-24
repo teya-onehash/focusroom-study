@@ -1,5 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js?v=20260924-7";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
@@ -48,6 +48,7 @@ const state = {
   theme: document.documentElement.dataset.theme || "dark",
   audio: null,
   authMode: "signup",
+  pendingVerificationEmail: "",
   mobileNav: false
 };
 
@@ -141,7 +142,7 @@ function setTheme(theme) {
 }
 
 function publicHeader() {
-  return '<header class="topbar"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>FocusRoom</a><nav class="top-links"><a href="#rooms">Rooms</a><a href="#features">Features</a><a href="#pricing">Plus</a><a href="#journal">Journal</a>' + themeToggle() + '<button class="btn btn-sm" data-auth="login">Log in</button><button class="btn btn-primary btn-sm" data-auth="signup">Join free</button></nav></header>';
+  return '<header class="topbar"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>FocusRoom</a><nav class="top-links"><a href="#rooms">Rooms</a><a href="#features">Features</a><a href="#pricing">Plans</a><a href="#journal">Journal</a>' + themeToggle() + '<button class="btn btn-sm" data-auth="login">Log in</button><button class="btn btn-primary btn-sm" data-auth="signup">Join free</button></nav></header>';
 }
 
 function roomCards(publicMode) {
@@ -154,16 +155,19 @@ function roomCards(publicMode) {
 
 function pricingCards() {
   const plans = [
-    { key: "week", name: "Weekly", price: "$3.99", unit: "/ week", note: "Flexible access" },
-    { key: "month", name: "Monthly", price: "$14", unit: "/ month", note: "Most popular", popular: true },
-    { key: "year", name: "Yearly", price: "$160", unit: "/ year", note: "Best for committed students" }
+    { key: "free", name: "Free", price: "$0", unit: "forever", note: "Start here", perks:["Unlimited public focus rooms","Timer, goals, history, and ambience","Text, image, and voice-note DMs","Up to 500 messages per day","30 encouragements per day"] },
+    { key: "basic_month", name: "Basic", price: "$1.99", unit: "/ month", note: "More community", perks:["Everything in Free","Up to 1,000 messages per day","60 encouragements per day","Save up to 20 favorite study partners","Full access to student channels"] },
+    { key: "premium_month", name: "Premium", price: "$6.99", unit: "/ month", note: "Recommended", popular:true, annual:true, perks:["Everything in Basic","Start private audio or video calls from DMs","Host invite-only rooms for up to 6 people","Up to 2,000 messages and 300 encouragements daily","Priority favorites and Premium badge"] },
+    { key: "buddy_month", name: "Buddy", price: "$12.99", unit: "/ month", note: "For two", perks:["Premium for you and one friend","Separate private accounts and histories","Private audio and video calls","Shared study-circle access","One subscription manages both seats"] }
   ];
   return plans.map(function (plan) {
     return '<article class="card price-card' + (plan.popular ? ' popular' : '') + '">' +
-      (plan.popular ? '<span class="popular-tag">Most popular</span>' : '') +
-      '<span class="eyebrow">' + plan.note + '</span><h3>' + plan.name + ' Plus</h3><div class="price">' + plan.price + '<small>' + plan.unit + '</small></div>' +
-      '<ul class="perk-list"><li>Host private video and audio rooms</li><li>50 encouragements every week</li><li>5 highlighted Focus Boosts weekly</li><li>Invite-only groups for up to 6 people</li><li>Private links expire automatically after 24 hours</li><li>Plus badge on your FocusRoom profile</li></ul>' +
-      '<button class="btn btn-primary" data-checkout="' + plan.key + '">Choose ' + plan.name + '</button><span class="apple-pay">Secure Stripe checkout · Apple Pay on eligible devices once activated</span></article>';
+      (plan.popular ? '<span class="popular-tag">Recommended</span>' : '') +
+      '<span class="eyebrow">' + plan.note + '</span><h3>' + plan.name + '</h3><div class="price">' + plan.price + '<small>' + plan.unit + '</small></div>' +
+      (plan.annual ? '<div class="annual-note"><strong>$5.83/month</strong> when billed yearly at $69.96</div>' : '') +
+      '<ul class="perk-list">' + plan.perks.map(function (perk) { return '<li>' + perk + '</li>'; }).join("") + '</ul>' +
+      (plan.key === "free" ? '<button class="btn" ' + (state.session ? 'data-view="rooms"' : 'data-auth="signup"') + '>Use FocusRoom free</button>' : '<button class="btn btn-primary" data-checkout="' + plan.key + '">Choose ' + plan.name + '</button>' + (plan.annual ? '<button class="btn btn-sm annual-button" data-checkout="premium_year">Choose annual Premium</button>' : '')) +
+      (plan.key === "free" ? '<span class="apple-pay">No card required</span>' : '<span class="apple-pay">Secure Stripe checkout · Apple Pay on eligible devices once activated</span>') + '</article>';
   }).join("");
 }
 
@@ -184,7 +188,7 @@ function renderLanding() {
     '<section class="section" id="rooms"><div class="section-head"><div><span class="eyebrow">Live rooms</span><h2>Find your focus atmosphere</h2></div><p>Every number is based on people actually connected to a room. Sign in to join with camera and microphone controls.</p></div><div class="room-grid">' + roomCards(true) + '</div></section>' +
     '<section class="section session-steps"><div class="section-head"><div><span class="eyebrow">A real session, not another feed</span><h2>From intention to finished work</h2></div></div><div class="grid-3"><article class="card step-card"><span>01</span><h3>Name the task</h3><p>Write one concrete intention and choose a 25, 50, or 90 minute block.</p></article><article class="card step-card"><span>02</span><h3>Check your setup</h3><p>Preview video, confirm microphone activity, and choose the exact devices you want.</p></article><article class="card step-card"><span>03</span><h3>Focus with others</h3><p>Join muted or camera-off, use the timer, and save finished sessions to your history.</p></article></div></section>' +
     '<section class="section" id="features"><div class="section-head"><div><span class="eyebrow">Made for momentum</span><h2>More than a video call</h2></div></div><div class="bento"><article class="card feature-card"><div class="feature-icon">◷</div><div><h3>Focus timer and goals</h3><p>Choose 25 or 50 minutes, write the next task, and save completed sessions to your history.</p></div></article><article class="card feature-card"><div class="feature-icon">♡</div><div><h3>Real encouragement</h3><p>Send a thoughtful nudge to someone who is showing up. Free members receive 5 sends each week.</p></div></article><article class="card feature-card"><div class="feature-icon">☾</div><div><h3>Cozy ambience</h3><p>Use generated rain, café, or fireside sound without opening another distracting tab.</p></div></article></div></section>' +
-    '<section class="section" id="pricing"><div class="section-head"><div><span class="eyebrow">FocusRoom Plus</span><h2>A more personal focus space</h2></div><p>All public rooms and essential focus tools stay free. Plus is for students who want private calls and extra ways to connect.</p></div><div class="pricing-grid">' + pricingCards() + '</div></section>' +
+    '<section class="section" id="pricing"><div class="section-head"><div><span class="eyebrow">Simple student pricing</span><h2>Free for focus. Upgrade for connection.</h2></div><p>Public rooms and core study tools stay free. Private audio and video calls are reserved for Premium and Buddy.</p></div><div class="pricing-grid pricing-four">' + pricingCards() + '</div></section>' +
     '<section class="section" id="journal"><div class="section-head"><div><span class="eyebrow">Focus journal</span><h2>Small ideas that help</h2></div></div><div class="grid-3">' + blogCards() + '</div></section></main>' +
     '<footer class="footer"><div><div class="brand"><span class="brand-mark"></span>FocusRoom</div><p>Study together without the pressure.</p></div><div><button class="btn btn-sm" data-privacy>Privacy</button> <button class="btn btn-sm" data-auth="login">Member login</button></div></footer></div>';
 }
@@ -195,13 +199,13 @@ function renderAuth() {
     '<form class="form" id="authForm">' +
     (signup ? '<div class="field"><label for="displayName">Display name</label><input id="displayName" name="displayName" minlength="2" maxlength="40" required autocomplete="name" placeholder="How others will see you"></div>' : '') +
     '<div class="field"><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" minlength="8" required autocomplete="' + (signup ? 'new-password' : 'current-password') + '" placeholder="At least 8 characters"></div>' +
-    '<button class="btn btn-primary" type="submit">' + (signup ? 'Create free account' : 'Log in') + '</button><p class="form-note">' + (signup ? 'You may need to confirm your email. Camera and microphone remain off until you choose to join a call.' : 'Welcome back. Your saved goals and focus history will be restored.') + '</p></form><button class="btn" data-public-home>← Back home</button></section></main>';
+    '<button class="btn btn-primary" type="submit">' + (signup ? 'Create free account' : 'Log in') + '</button><p class="form-note">' + (signup ? 'You may need to confirm your email. Camera and microphone remain off until you choose to join a call.' : 'Welcome back. Your saved goals and focus history will be restored.') + '</p></form>' + (!signup ? '<button class="btn btn-link" data-open-resend>Didn’t receive a verification email?</button>' : '') + '<button class="btn" data-public-home>← Back home</button></section></main>';
 }
 
 function navItems() {
   const items = [
     ["home","⌂","Home"], ["rooms","◎","Study rooms"], ["goals","✓","Goals & progress"],
-    ["encouragements","♡","Encouragements"], ["private","♢","Private calls"], ["plus","✦","FocusRoom Plus"],
+    ["encouragements","♡","Encouragements"], ["private","♢","Private calls"], ["plus","✦","Membership"],
     ["blog","▤","Focus journal"], ["profile","●","Profile"], ["settings","⚙","Privacy & settings"]
   ];
   return items.map(function (item) {
@@ -211,8 +215,8 @@ function navItems() {
 
 function appShell(content, title) {
   const name = state.profile ? state.profile.display_name : "Student";
-  const plus = state.allowance.plan === "plus";
-  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><div class="side-profile"><div class="avatar" style="background:' + esc(state.profile && state.profile.avatar_color || "#7c6cff") + '">' + initials(name) + '</div><div><strong>' + esc(name) + '</strong><small>' + (plus ? '<span class="plus-badge">✦ PLUS</span>' : 'Free member') + '</small></div></div></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div class="app-top-actions">' + themeToggle() + '<button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
+  const plan = state.allowance.plan === "plus" ? "premium" : state.allowance.plan;
+  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><div class="side-profile"><div class="avatar" style="background:' + esc(state.profile && state.profile.avatar_color || "#7c6cff") + '">' + initials(name) + '</div><div><strong>' + esc(name) + '</strong><small>' + (plan !== "free" ? '<span class="plus-badge">✦ ' + esc(String(plan).toUpperCase()) + '</span>' : 'Free member') + '</small></div></div></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div class="app-top-actions">' + themeToggle() + '<button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
 }
 
 function ambientDock() {
@@ -277,17 +281,17 @@ function renderEncouragements() {
 }
 
 function renderPrivate() {
-  const plus = state.allowance.plan === "plus";
+  const plus = ["plus", "premium", "buddy"].includes(state.allowance.plan);
   const list = state.privateRooms.map(function (room) {
     return '<div class="private-room"><div><strong>' + esc(room.title) + '</strong><p>' + (room.call_mode === "audio" ? "Audio call" : "Video call") + ' · expires ' + new Date(room.expires_at).toLocaleString() + '</p></div><div><button class="btn btn-sm" data-copy-invite="' + room.invite_token + '">Copy invite</button> <button class="btn btn-sm btn-primary" data-join-private="' + room.id + '">Open</button></div></div>';
   }).join("");
-  const create = plus ? '<form class="card form" id="privateRoomForm"><h3>Create a private room</h3><div class="field"><label>Room title</label><input name="title" minlength="2" maxlength="80" required placeholder="Evening study call"></div><div class="field"><label>Call type</label><select name="mode"><option value="video">Video call</option><option value="audio">Audio call</option></select></div><button class="btn btn-primary">Create private room</button><p class="form-note">Rooms expire after 24 hours and support up to 6 authenticated members.</p></form>' : '<article class="card daily-card"><span class="eyebrow">Plus feature</span><h2>Private calls for your study circle</h2><p>Create an invite-only audio or video room for up to six people. Your invite uses a random private token and expires after 24 hours.</p><button class="btn btn-primary" data-view="plus">See Plus plans</button></article>';
-  appShell('<div class="page-head"><div><span class="eyebrow">Your study circle</span><h1>Private calls</h1><p>Host access requires Plus. Invited members can join with a free account.</p></div>' + (plus ? '<span class="plus-badge">✦ PLUS ACTIVE</span>' : '') + '</div><div class="dashboard-grid"><div class="stack"><section class="card"><h3>Your rooms</h3><div class="stack">' + (list || '<div class="empty">You have no active private rooms.</div>') + '</div></section></div>' + create + '</div>', "Private calls");
+  const create = plus ? '<form class="card form" id="privateRoomForm"><h3>Create a private room</h3><div class="field"><label>Room title</label><input name="title" minlength="2" maxlength="80" required placeholder="Evening study call"></div><div class="field"><label>Call type</label><select name="mode"><option value="video">Video call</option><option value="audio">Audio call</option></select></div><button class="btn btn-primary">Create private room</button><p class="form-note">Rooms expire after 24 hours and support up to 6 authenticated members.</p></form>' : '<article class="card daily-card"><span class="eyebrow">Premium feature</span><h2>Private calls for your study circle</h2><p>Create an invite-only audio or video room for up to six people. Your invite uses a random private token and expires after 24 hours.</p><button class="btn btn-primary" data-view="plus">See membership plans</button></article>';
+  appShell('<div class="page-head"><div><span class="eyebrow">Your study circle</span><h1>Private calls</h1><p>Hosting requires Premium or Buddy. Invited members can join with a free account.</p></div>' + (plus ? '<span class="plus-badge">✦ PRIVATE CALLS ACTIVE</span>' : '') + '</div><div class="dashboard-grid"><div class="stack"><section class="card"><h3>Your rooms</h3><div class="stack">' + (list || '<div class="empty">You have no active private rooms.</div>') + '</div></section></div>' + create + '</div>', "Private calls");
 }
 
 function renderPlus() {
-  const active = state.allowance.plan === "plus";
-  appShell('<div class="page-head"><div><span class="eyebrow">A little more room to connect</span><h1>FocusRoom Plus</h1><p>Public rooms, timers, goals, focus history, ambience, and light/dark mode remain free.</p></div>' + (active ? '<span class="plus-badge">✦ YOUR PLAN IS ACTIVE</span>' : '') + '</div><div class="pricing-grid">' + pricingCards() + '</div><section class="card" style="margin-top:24px"><h3>What Plus changes</h3><p>Plus unlocks private rooms and higher encouragement limits. It does not reduce the free focus experience or sell visibility in public rooms. Features such as direct messages, channels, favorites, and buddy billing will only be offered after their moderation, blocking, privacy, and subscription rules are fully implemented.</p></section>', "FocusRoom Plus");
+  const active = state.allowance.plan !== "free";
+  appShell('<div class="page-head"><div><span class="eyebrow">Membership</span><h1>Choose what fits</h1><p>Public rooms, timers, goals, focus history, ambience, and appearance settings remain free.</p></div>' + (active ? '<span class="plus-badge">✦ ' + esc(String(state.allowance.plan).toUpperCase()) + ' ACTIVE</span>' : '') + '</div><div class="pricing-grid pricing-four">' + pricingCards() + '</div><section class="card" style="margin-top:24px"><h3>The important difference</h3><p>Text, image, and voice-note messaging are available on every plan with generous anti-spam limits. Starting a private audio or video call from a DM—and hosting invite-only call rooms—requires Premium or Buddy.</p></section>', "Membership");
 }
 
 function renderBlog() {
@@ -401,13 +405,24 @@ async function handleAuthSubmit(form) {
     const result = await supabase.auth.signUp({ email:email, password:password, options:{ data:{ display_name:displayName }, emailRedirectTo:location.origin + location.pathname } });
     if (result.error) showToast(result.error.message, true);
     else if (!result.data.session) {
-      showModal("Check your email", '<p>We sent a confirmation link to <strong>' + esc(email) + '</strong>. Open it to activate your FocusRoom account.</p><button class="btn btn-primary" data-close-modal>Got it</button>');
+      state.pendingVerificationEmail = email;
+      showModal("Check your email", '<p>We sent a confirmation link to <strong>' + esc(email) + '</strong>. Open it to activate your FocusRoom account.</p><p class="form-note">Check Spam and Promotions. If the link says it was already used, request a fresh one below—some email security scanners can open single-use links before you do.</p><button class="btn" data-resend-email>Resend verification</button> <button class="btn btn-primary" data-close-modal>Got it</button>');
       button.disabled = false; button.textContent = "Create free account";
     }
   } else {
     const result = await supabase.auth.signInWithPassword({ email:email, password:password });
     if (result.error) { showToast(result.error.message, true); button.disabled = false; button.textContent = "Log in"; }
   }
+}
+
+async function resendVerification(email) {
+  const address = String(email || state.pendingVerificationEmail || "").trim();
+  if (!address) return showToast("Enter the email address you registered with.", true);
+  const result = await supabase.auth.resend({ type:"signup", email:address, options:{ emailRedirectTo:location.origin + location.pathname } });
+  if (result.error) return showToast(result.error.message, true);
+  state.pendingVerificationEmail = address;
+  closeModal();
+  showToast("A fresh verification email was sent. Check Spam and Promotions too.");
 }
 
 async function saveGoal(title) {
@@ -734,7 +749,8 @@ function saveStudyPreferences(form) {
 function checkout(interval) {
   const url = CHECKOUT_URLS[interval];
   if (!url) {
-    showModal("Apple Pay–ready checkout", '<p>The membership design and secure plan rules are ready. To take real payments, the site owner must connect a Stripe account and create the three recurring prices.</p><p>After connection, Stripe Checkout can show Apple Pay automatically on eligible Apple devices.</p><div class="card"><strong>Selected plan</strong><p>' + (interval === "week" ? "$3.99 weekly" : interval === "month" ? "$14 monthly" : "$160 yearly") + '</p></div><button class="btn btn-primary" data-close-modal>Got it</button>');
+    const labels = { basic_month:"Basic · $1.99 monthly", premium_month:"Premium · $6.99 monthly", premium_year:"Premium · $69.96 yearly ($5.83/month)", buddy_month:"Buddy · $12.99 monthly" };
+    showModal("Checkout is being connected", '<p>The new membership prices are set. Payment collection stays disabled until the matching Stripe recurring prices and verified business profile are connected.</p><p>When activated, Stripe Checkout can show Apple Pay automatically on eligible Apple devices.</p><div class="card"><strong>Selected plan</strong><p>' + esc(labels[interval] || "Membership") + '</p></div><button class="btn btn-primary" data-close-modal>Got it</button>');
     return;
   }
   location.href = url;
@@ -786,6 +802,8 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.publicHome !== undefined) { event.preventDefault(); state.session ? (state.view = "home", renderApp()) : renderLanding(); }
   if (target.dataset.auth) { state.authMode = target.dataset.auth; renderAuth(); }
   if (target.dataset.authTab) { state.authMode = target.dataset.authTab; renderAuth(); }
+  if (target.dataset.openResend !== undefined) showModal("Resend verification", '<form id="resendForm" class="form"><div class="field"><label for="resendEmail">Account email</label><input id="resendEmail" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><button class="btn btn-primary">Send a fresh link</button></form>');
+  if (target.dataset.resendEmail !== undefined) await resendVerification();
   if (target.dataset.view) { state.view = target.dataset.view; state.mobileNav = false; renderApp(); }
   if (target.dataset.joinRoom) await joinPublicRoom(target.dataset.joinRoom);
   if (target.dataset.checkDevices !== undefined) await checkDevices();
@@ -817,6 +835,7 @@ document.addEventListener("submit", async function (event) {
   event.preventDefault();
   const form = event.target;
   if (form.id === "authForm") await handleAuthSubmit(form);
+  if (form.id === "resendForm") { const data = new FormData(form); await resendVerification(data.get("email")); }
   if (form.id === "quickSessionForm") {
     const data = new FormData(form);
     state.joinDraft.intention = String(data.get("intention") || "").trim();
