@@ -33,6 +33,12 @@ const state = {
   messages: [],
   messageMedia: {},
   dmChannel: null,
+  dmCalls: [],
+  pendingDmCalls: [],
+  dmCallChannel: null,
+  notifiedDmCalls: new Set(),
+  activeDmCallId: null,
+  pendingDmStart: null,
   voiceRecorder: null,
   voiceStream: null,
   voiceChunks: [],
@@ -148,6 +154,7 @@ function closeModal() {
   stopDevicePreview();
   state.pendingRoom = null;
   state.pendingPrivate = false;
+  state.pendingDmStart = null;
   modalRoot.innerHTML = "";
 }
 
@@ -365,6 +372,46 @@ function messagePreview(conversation) {
   return conversation.last_message || (conversation.accepted ? "Start the conversation" : "Message request");
 }
 
+function privateCallsIncluded() {
+  return ["plus", "premium", "buddy"].includes(state.allowance.plan);
+}
+
+function renderDmMessageEvent(message, person) {
+  const mine = message.sender_id === state.user.id;
+  let body = '<p>' + esc(message.body) + '</p>';
+  if (message.kind === "image") body = state.messageMedia[message.id]
+    ? '<img class="dm-image" src="' + esc(state.messageMedia[message.id]) + '" alt="Photo sent in this conversation">'
+    : '<p class="media-loading">Loading photo…</p>';
+  if (message.kind === "voice") body = state.messageMedia[message.id]
+    ? '<audio controls preload="metadata" src="' + esc(state.messageMedia[message.id]) + '"></audio>'
+    : '<p class="media-loading">Loading voice message…</p>';
+  return '<div class="message-row ' + (mine ? 'mine' : 'theirs') + '"><div class="message-bubble">' + body + '<span>' + new Date(message.created_at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + '</span></div>' + (!mine ? '<button class="message-report" data-report-message="' + esc(message.id) + '" data-report-user="' + esc(person.id) + '" aria-label="Report message">•••</button>' : '') + '</div>';
+}
+
+function dmCallStatus(call) {
+  if (call.status === "ringing") return call.caller_id === state.user.id ? "Calling…" : "Incoming call";
+  if (call.status === "active") return "Call in progress";
+  if (call.status === "declined") return "Call declined";
+  if (call.status === "cancelled") return "Call cancelled";
+  if (call.status === "missed") return "Missed call";
+  return "Call ended";
+}
+
+function renderDmCallEvent(call, person) {
+  const mine = call.caller_id === state.user.id;
+  const icon = call.call_mode === "audio" ? "☎" : "▣";
+  const type = call.call_mode === "audio" ? "Audio call" : "Video call";
+  let actions = "";
+  if (call.status === "ringing" && !mine) {
+    actions = '<button class="btn btn-primary btn-sm" data-answer-dm-call="' + esc(call.id) + '">Accept</button><button class="btn btn-sm" data-decline-dm-call="' + esc(call.id) + '">Decline</button>';
+  } else if (call.status === "ringing" && mine) {
+    actions = '<button class="btn btn-sm" data-end-dm-call="' + esc(call.id) + '">Cancel</button>';
+  } else if (call.status === "active" && call.jitsi_room) {
+    actions = '<button class="btn btn-primary btn-sm" data-join-dm-call="' + esc(call.id) + '">Join</button><button class="btn btn-sm" data-end-dm-call="' + esc(call.id) + '">End</button>';
+  }
+  return '<div class="dm-call-event ' + (call.status === "active" || call.status === "ringing" ? 'live' : '') + '"><span class="dm-call-icon">' + icon + '</span><div><strong>' + type + '</strong><p>' + esc(dmCallStatus(call)) + ' · ' + new Date(call.created_at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + '</p></div>' + (actions ? '<div class="dm-call-event-actions">' + actions + '</div>' : '') + '</div>';
+}
+
 function renderMessages() {
   const active = activeConversation();
   const conversationRows = state.conversations.map(function (conversation) {
@@ -375,27 +422,24 @@ function renderMessages() {
   let panel = '<div class="message-empty"><span>✉</span><h2>Your messages live here</h2><p>Open a student profile and choose Message to begin.</p></div>';
   if (active) {
     const person = conversationPerson(active);
-    const messages = state.messages.map(function (message) {
-      const mine = message.sender_id === state.user.id;
-      let body = '<p>' + esc(message.body) + '</p>';
-      if (message.kind === "image") body = state.messageMedia[message.id]
-        ? '<img class="dm-image" src="' + esc(state.messageMedia[message.id]) + '" alt="Photo sent in this conversation">'
-        : '<p class="media-loading">Loading photo…</p>';
-      if (message.kind === "voice") body = state.messageMedia[message.id]
-        ? '<audio controls preload="metadata" src="' + esc(state.messageMedia[message.id]) + '"></audio>'
-        : '<p class="media-loading">Loading voice message…</p>';
-      return '<div class="message-row ' + (mine ? 'mine' : 'theirs') + '"><div class="message-bubble">' + body + '<span>' + new Date(message.created_at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + '</span></div>' + (!mine ? '<button class="message-report" data-report-message="' + esc(message.id) + '" data-report-user="' + esc(person.id) + '" aria-label="Report message">•••</button>' : '') + '</div>';
-    }).join("");
+    const timeline = state.messages.map(function (message) { return { type:"message", at:message.created_at, value:message }; })
+      .concat(state.dmCalls.map(function (call) { return { type:"call", at:call.created_at, value:call }; }))
+      .sort(function (a, b) { return new Date(a.at) - new Date(b.at); })
+      .map(function (event) { return event.type === "message" ? renderDmMessageEvent(event.value, person) : renderDmCallEvent(event.value, person); })
+      .join("");
     const recipientRequest = !active.accepted && active.created_by !== state.user.id;
     const senderWaiting = !active.accepted && active.created_by === state.user.id && state.messages.length > 0;
     const canCompose = active.accepted || (!active.accepted && active.created_by === state.user.id && state.messages.length === 0);
+    const callActions = active.accepted
+      ? '<div class="dm-call-actions"><button class="btn icon-btn dm-call-button' + (privateCallsIncluded() ? '' : ' locked') + '" data-start-dm-call="audio" aria-label="Start private audio call" title="' + (privateCallsIncluded() ? 'Start audio call' : 'Premium or Buddy') + '">☎</button><button class="btn icon-btn dm-call-button' + (privateCallsIncluded() ? '' : ' locked') + '" data-start-dm-call="video" aria-label="Start private video call" title="' + (privateCallsIncluded() ? 'Start video call' : 'Premium or Buddy') + '">▣</button></div>'
+      : '';
     const requestBanner = recipientRequest
       ? '<div class="message-request"><div><strong>Message request</strong><p>Accept before replying. You can also block or report this member.</p></div><button class="btn btn-primary btn-sm" data-accept-dm="' + esc(active.id) + '">Accept</button></div>'
       : (senderWaiting ? '<div class="message-request waiting"><div><strong>Request sent</strong><p>You can continue after ' + esc(person.display_name) + ' accepts.</p></div></div>' : '');
     const composer = canCompose
       ? '<form class="dm-composer" id="dmForm"><textarea name="message" maxlength="2000" rows="1" required placeholder="Message ' + esc(person.display_name) + '"></textarea><label class="btn icon-btn" title="Send a photo"><input id="dmMediaInput" type="file" accept="image/jpeg,image/png,image/webp" hidden><span aria-hidden="true">▧</span></label><button class="btn icon-btn record-button ' + (state.voiceRecorder && state.voiceRecorder.state === "recording" ? 'recording' : '') + '" type="button" data-record-voice title="' + (state.voiceRecorder && state.voiceRecorder.state === "recording" ? 'Stop recording' : 'Record a voice message') + '">●</button><button class="btn btn-primary" type="submit">Send</button></form>'
       : '';
-    panel = '<section class="message-panel"><header class="message-head"><button class="message-person" data-member-profile="' + esc(person.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + (active.accepted ? 'Private conversation' : 'Message request') + '</small></span></button><button class="btn icon-btn" data-profile-options="' + esc(person.id) + '" aria-label="Conversation safety options">•••</button></header>' + requestBanner + '<div class="message-thread" id="messageThread">' + (messages || '<div class="thread-start"><span>Start simple</span><p>Say hello and share what you are studying.</p></div>') + '</div>' + composer + '</section>';
+    panel = '<section class="message-panel"><header class="message-head"><button class="message-person" data-member-profile="' + esc(person.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + (active.accepted ? 'Private conversation' : 'Message request') + '</small></span></button><div class="message-head-actions">' + callActions + '<button class="btn icon-btn" data-profile-options="' + esc(person.id) + '" aria-label="Conversation safety options">•••</button></div></header>' + requestBanner + '<div class="message-thread" id="messageThread">' + (timeline || '<div class="thread-start"><span>Start simple</span><p>Say hello and share what you are studying.</p></div>') + '</div>' + composer + '</section>';
   }
 
   appShell('<div class="messages-layout"><aside class="conversation-list"><div class="conversation-title"><div><span class="eyebrow">Private</span><h1>Messages</h1></div><button class="btn icon-btn" data-view="encouragements" title="Find students">＋</button></div><div class="conversation-scroll">' + (conversationRows || '<div class="empty conversation-empty">No conversations yet.</div>') + '</div></aside>' + panel + '</div>', "Messages");
@@ -470,11 +514,13 @@ async function loadUserData() {
     supabase.rpc("list_received_encouragements", { p_limit:30 }),
     supabase.rpc("list_member_profiles", { p_limit:24 }),
     supabase.from("private_rooms").select("*").order("created_at", { ascending:false }),
-    supabase.rpc("list_dm_conversations")
+    supabase.rpc("list_dm_conversations"),
+    supabase.rpc("list_pending_dm_calls")
   ]);
   if (results[0].error) showToast(results[0].error.message, true);
   if (results[6].error) showToast(results[6].error.message, true);
   if (results[8].error) showToast(results[8].error.message, true);
+  if (results[9].error) showToast(results[9].error.message, true);
   state.profile = results[0].data || { id:userId, display_name:state.user.email.split("@")[0], bio:"", country:"", subject:"", avatar_color:"#7c6cff", avatar_path:null, show_profile:true, show_country:false, allow_invites:true, accepting_dms:true, accepting_encouragements:true };
   state.goals = results[1].data || [];
   state.sessions = results[2].data || [];
@@ -484,6 +530,7 @@ async function loadUserData() {
   state.members = results[6].data || [];
   state.privateRooms = results[7].data || [];
   state.conversations = results[8].data || [];
+  state.pendingDmCalls = results[9].data || [];
   await processInvite();
 }
 
@@ -553,14 +600,14 @@ async function startConversation(userId) {
   await loadConversations();
   state.activeConversationId = result.data;
   state.view = "messages";
-  await loadMessages(result.data);
+  await Promise.all([loadMessages(result.data), loadDmCalls(result.data)]);
   renderMessages();
 }
 
 async function openConversation(conversationId) {
   state.activeConversationId = conversationId;
   state.view = "messages";
-  await loadMessages(conversationId);
+  await Promise.all([loadMessages(conversationId), loadDmCalls(conversationId)]);
   renderMessages();
 }
 
@@ -589,13 +636,161 @@ function subscribeToDm(conversationId) {
     .subscribe();
 }
 
+async function loadDmCalls(conversationId) {
+  if (!conversationId) { state.dmCalls = []; return; }
+  const result = await supabase.rpc("list_dm_calls", { p_conversation_id:conversationId, p_limit:30 });
+  if (result.error) return showToast(result.error.message, true);
+  state.dmCalls = result.data || [];
+}
+
+async function loadPendingDmCalls() {
+  const result = await supabase.rpc("list_pending_dm_calls");
+  if (result.error) return;
+  state.pendingDmCalls = result.data || [];
+}
+
+function incomingCallPerson(call) {
+  const conversation = state.conversations.find(function (item) { return item.id === call.conversation_id; });
+  if (conversation) return conversationPerson(conversation);
+  return {
+    id:call.caller_id,
+    display_name:call.caller_display_name || "A FocusRoom member",
+    avatar_color:call.caller_avatar_color || "#7c6cff",
+    avatar_path:call.caller_avatar_path || null
+  };
+}
+
+function notifyNextIncomingCall() {
+  if (!state.session) return;
+  const call = state.pendingDmCalls.find(function (item) { return !state.notifiedDmCalls.has(item.id); });
+  if (!call) return;
+  if (modalRoot.children.length) {
+    showToast("You have an incoming private call.");
+    setTimeout(notifyNextIncomingCall, 4000);
+    return;
+  }
+  const person = incomingCallPerson(call);
+  state.notifiedDmCalls.add(call.id);
+  showModal("Incoming " + (call.call_mode === "audio" ? "audio" : "video") + " call", '<div class="incoming-call"><div class="incoming-call-avatar">' + avatarMarkup(person, "profile-avatar") + '</div><h2>' + esc(person.display_name) + '</h2><p>is calling you privately on FocusRoom</p><div class="incoming-call-actions"><button class="btn" data-decline-dm-call="' + esc(call.id) + '">Decline</button><button class="btn btn-primary" data-answer-dm-call="' + esc(call.id) + '">Accept</button></div></div>');
+}
+
+function subscribeToDmCalls() {
+  if (state.dmCallChannel) supabase.removeChannel(state.dmCallChannel);
+  if (!state.user) return;
+  state.dmCallChannel = supabase.channel("focusroom-dm-calls-" + state.user.id)
+    .on("postgres_changes", { event:"*", schema:"public", table:"dm_calls" }, async function (payload) {
+      const changed = payload.new && payload.new.id ? payload.new : payload.old;
+      await Promise.all([loadConversations(), loadPendingDmCalls()]);
+      if (state.activeConversationId && changed && changed.conversation_id === state.activeConversationId) {
+        await loadDmCalls(state.activeConversationId);
+        if (state.view === "messages" && !document.querySelector(".meeting-page")) renderMessages();
+      }
+      if (changed && changed.id === state.activeDmCallId && ["declined", "cancelled", "missed", "ended"].includes(changed.status)) {
+        await leaveMeeting(false);
+        showToast("The private call ended.");
+      }
+      notifyNextIncomingCall();
+    })
+    .subscribe();
+}
+
 async function acceptConversation(conversationId) {
   const result = await supabase.rpc("accept_dm", { p_conversation_id:conversationId });
   if (result.error) return showToast(result.error.message, true);
   await loadConversations();
-  await loadMessages(conversationId);
+  await Promise.all([loadMessages(conversationId), loadDmCalls(conversationId)]);
   renderMessages();
   showToast("Message request accepted.");
+}
+
+function dmCallRoom(call, person) {
+  return {
+    id:call.room_id,
+    title:(call.call_mode === "audio" ? "Audio call with " : "Video call with ") + (person && person.display_name || "study partner"),
+    description:"A private one-to-one FocusRoom call.",
+    call_mode:call.call_mode,
+    jitsi_room:call.jitsi_room,
+    dm_call_id:call.id
+  };
+}
+
+function startDmCallSetup(mode) {
+  const active = activeConversation();
+  if (!active || !active.accepted) return showToast("Accept the message request before calling.", true);
+  if (!privateCallsIncluded()) {
+    state.view = "plus";
+    renderPlus();
+    return showToast("Private audio and video calls are included with Premium and Buddy.");
+  }
+  const person = conversationPerson(active);
+  state.pendingDmStart = { conversationId:active.id, mode:mode, person:person };
+  showJoinLobby({
+    id:"dm-call-setup",
+    title:(mode === "audio" ? "Audio call with " : "Video call with ") + person.display_name,
+    call_mode:mode,
+    description:"Check your devices, then start the private call."
+  }, true);
+}
+
+async function createDmCall(start) {
+  const result = await supabase.rpc("start_dm_call", {
+    p_conversation_id:start.conversationId,
+    p_call_mode:start.mode
+  });
+  if (result.error || !result.data || !result.data[0]) {
+    showToast(result.error ? result.error.message : "The call could not start.", true);
+    return null;
+  }
+  const call = result.data[0];
+  await Promise.all([loadDmCalls(start.conversationId), loadPendingDmCalls()]);
+  if (state.view === "messages") renderMessages();
+  showToast("Calling " + start.person.display_name + "…");
+  return dmCallRoom(call, start.person);
+}
+
+async function answerDmCall(callId, shouldAccept) {
+  const pending = state.pendingDmCalls.find(function (item) { return item.id === callId; });
+  const existing = state.dmCalls.find(function (item) { return item.id === callId; });
+  const conversationId = (pending || existing || {}).conversation_id;
+  const result = await supabase.rpc("answer_dm_call", {
+    p_call_id:callId,
+    p_response:shouldAccept ? "accept" : "decline"
+  });
+  if (result.error) return showToast(result.error.message, true);
+  state.pendingDmCalls = state.pendingDmCalls.filter(function (item) { return item.id !== callId; });
+  modalRoot.innerHTML = "";
+  if (!shouldAccept) {
+    if (conversationId === state.activeConversationId) await loadDmCalls(conversationId);
+    if (state.view === "messages") renderMessages();
+    return showToast("Call declined.");
+  }
+  const call = result.data && result.data[0];
+  if (!call || !call.jitsi_room) return showToast("The call room is unavailable.", true);
+  await loadConversations();
+  state.activeConversationId = call.conversation_id;
+  state.view = "messages";
+  await Promise.all([loadMessages(call.conversation_id), loadDmCalls(call.conversation_id)]);
+  renderMessages();
+  const person = incomingCallPerson(pending || call);
+  showJoinLobby(dmCallRoom(call, person), true);
+}
+
+async function joinDmCall(callId) {
+  const call = state.dmCalls.find(function (item) { return item.id === callId; });
+  const active = activeConversation();
+  if (!call || call.status !== "active" || !call.jitsi_room) return showToast("This call is no longer available.", true);
+  showJoinLobby(dmCallRoom(call, active && conversationPerson(active)), true);
+}
+
+async function endDmCall(callId) {
+  const result = await supabase.rpc("end_dm_call", { p_call_id:callId });
+  if (result.error) return showToast(result.error.message, true);
+  state.pendingDmCalls = state.pendingDmCalls.filter(function (item) { return item.id !== callId; });
+  if (state.activeDmCallId === callId) await leaveMeeting(false);
+  if (state.activeConversationId) await loadDmCalls(state.activeConversationId);
+  if (state.view === "messages") renderMessages();
+  modalRoot.innerHTML = "";
+  showToast("Private call ended.");
 }
 
 async function submitDm(form) {
@@ -986,6 +1181,7 @@ async function ensureJitsi() {
 async function mountMeeting(room, isPrivate, joinOptions) {
   const options = joinOptions || state.joinDraft;
   state.activeRoom = room;
+  state.activeDmCallId = room.dm_call_id || null;
   state.timerPreset = Number(options.duration || 50);
   state.timerSeconds = state.timerPreset * 60;
   const directUrl = "https://meet.jit.si/" + encodeURIComponent(room.jitsi_room);
@@ -1035,11 +1231,19 @@ function trackPresence(room, isPrivate) {
   });
 }
 
-async function leaveMeeting() {
+async function leaveMeeting(endCall) {
+  const dmCallId = state.activeDmCallId;
+  state.activeDmCallId = null;
   if (state.presenceChannel) { await state.presenceChannel.untrack(); await supabase.removeChannel(state.presenceChannel); state.presenceChannel = null; }
   if (state.jitsi) { state.jitsi.dispose(); state.jitsi = null; }
   state.activeRoom = null;
   document.querySelector(".meeting-page")?.remove();
+  if (dmCallId && endCall !== false) {
+    const result = await supabase.rpc("end_dm_call", { p_call_id:dmCallId });
+    if (result.error) showToast(result.error.message, true);
+    if (state.activeConversationId) await loadDmCalls(state.activeConversationId);
+    if (state.view === "messages") renderMessages();
+  }
 }
 
 async function sendEncouragement(userId, kind) {
@@ -1174,6 +1378,11 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.messageMember) await startConversation(target.dataset.messageMember);
   if (target.dataset.conversation) await openConversation(target.dataset.conversation);
   if (target.dataset.acceptDm) await acceptConversation(target.dataset.acceptDm);
+  if (target.dataset.startDmCall) startDmCallSetup(target.dataset.startDmCall);
+  if (target.dataset.answerDmCall) await answerDmCall(target.dataset.answerDmCall, true);
+  if (target.dataset.declineDmCall) await answerDmCall(target.dataset.declineDmCall, false);
+  if (target.dataset.joinDmCall) await joinDmCall(target.dataset.joinDmCall);
+  if (target.dataset.endDmCall) await endDmCall(target.dataset.endDmCall);
   if (target.dataset.recordVoice !== undefined) await toggleVoiceRecording();
   if (target.dataset.profileOptions) showReportModal(target.dataset.profileOptions, null);
   if (target.dataset.reportMessage) showReportModal(target.dataset.reportUser, target.dataset.reportMessage);
@@ -1221,8 +1430,9 @@ document.addEventListener("submit", async function (event) {
   }
   if (form.id === "joinLobbyForm") {
     const data = new FormData(form);
-    const room = state.pendingRoom;
+    let room = state.pendingRoom;
     const isPrivate = state.pendingPrivate;
+    const dmStart = state.pendingDmStart;
     state.joinDraft = {
       intention:String(data.get("intention") || "").trim(),
       duration:Number(data.get("duration") || 50),
@@ -1235,6 +1445,8 @@ document.addEventListener("submit", async function (event) {
     modalRoot.innerHTML = "";
     state.pendingRoom = null;
     state.pendingPrivate = false;
+    state.pendingDmStart = null;
+    if (dmStart) room = await createDmCall(dmStart);
     if (room) await mountMeeting(room, isPrivate, state.joinDraft);
   }
   if (form.id === "goalForm") { const data = new FormData(form); await saveGoal(String(data.get("title")).trim()); }
@@ -1250,6 +1462,7 @@ document.addEventListener("submit", async function (event) {
 window.addEventListener("beforeunload", function () {
   if (state.presenceChannel) state.presenceChannel.untrack();
   if (state.dmChannel) supabase.removeChannel(state.dmChannel);
+  if (state.dmCallChannel) supabase.removeChannel(state.dmCallChannel);
   if (state.voiceStream) state.voiceStream.getTracks().forEach(function (track) { track.stop(); });
   stopAmbient();
 });
@@ -1262,15 +1475,18 @@ async function init() {
   state.user = state.session && state.session.user;
   if (state.session) await loadUserData();
   renderApp();
+  if (state.session) { subscribeToDmCalls(); notifyNextIncomingCall(); }
   supabase.auth.onAuthStateChange(function (event, session) {
     setTimeout(async function () {
       state.session = session; state.user = session && session.user;
       if (session) { await loadUserData(); state.view = "home"; }
       else {
         if (state.dmChannel) { await supabase.removeChannel(state.dmChannel); state.dmChannel = null; }
-        state.profile = null; state.memberProfile = null; state.conversations = []; state.messages = []; state.view = "home";
+        if (state.dmCallChannel) { await supabase.removeChannel(state.dmCallChannel); state.dmCallChannel = null; }
+        state.profile = null; state.memberProfile = null; state.conversations = []; state.messages = []; state.dmCalls = []; state.pendingDmCalls = []; state.activeDmCallId = null; state.view = "home";
       }
       renderApp();
+      if (session) { subscribeToDmCalls(); notifyNextIncomingCall(); }
     }, 0);
   });
 }
