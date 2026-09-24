@@ -8,6 +8,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 const app = document.querySelector("#app");
 const modalRoot = document.querySelector("#modalRoot");
 const toastEl = document.querySelector("#toast");
+const savedPreferences = (function () {
+  try { return JSON.parse(localStorage.getItem("focusroom-study-preferences") || "{}"); }
+  catch (error) { return {}; }
+}());
+const defaultPreferences = { defaultDuration:50, defaultRoom:"deep-focus", defaultCamera:false, defaultMicrophone:false, soundCues:true, compactMode:false };
+const studyPreferences = Object.assign({}, defaultPreferences, savedPreferences);
 
 const state = {
   session: null,
@@ -32,7 +38,8 @@ const state = {
   previewAnimation: null,
   pendingRoom: null,
   pendingPrivate: false,
-  joinDraft: { intention: "", duration: 50, camera: false, microphone: false },
+  joinDraft: { intention: "", duration: Number(studyPreferences.defaultDuration), camera: Boolean(studyPreferences.defaultCamera), microphone: Boolean(studyPreferences.defaultMicrophone) },
+  preferences: studyPreferences,
   timerSeconds: 25 * 60,
   timerPreset: 25,
   timerRunning: false,
@@ -155,8 +162,8 @@ function pricingCards() {
     return '<article class="card price-card' + (plan.popular ? ' popular' : '') + '">' +
       (plan.popular ? '<span class="popular-tag">Most popular</span>' : '') +
       '<span class="eyebrow">' + plan.note + '</span><h3>' + plan.name + ' Plus</h3><div class="price">' + plan.price + '<small>' + plan.unit + '</small></div>' +
-      '<ul class="perk-list"><li>Host private video and audio rooms</li><li>50 encouragements every week</li><li>5 highlighted Focus Boosts weekly</li><li>Private groups for up to 6 people</li><li>Full focus history and premium themes</li><li>Plus profile badge and no ads</li></ul>' +
-      '<button class="btn btn-primary" data-checkout="' + plan.key + '">Choose ' + plan.name + '</button><span class="apple-pay"> Pay available at checkout</span></article>';
+      '<ul class="perk-list"><li>Host private video and audio rooms</li><li>50 encouragements every week</li><li>5 highlighted Focus Boosts weekly</li><li>Invite-only groups for up to 6 people</li><li>Private links expire automatically after 24 hours</li><li>Plus badge on your FocusRoom profile</li></ul>' +
+      '<button class="btn btn-primary" data-checkout="' + plan.key + '">Choose ' + plan.name + '</button><span class="apple-pay">Secure Stripe checkout · Apple Pay on eligible devices once activated</span></article>';
   }).join("");
 }
 
@@ -227,12 +234,12 @@ function streakDays() {
 function renderHome() {
   const complete = state.goals.filter(function (g) { return g.complete; }).length;
   const progress = state.goals.length ? Math.round(complete / state.goals.length * 100) : 0;
-  const leadRoom = state.rooms[0];
+  const leadRoom = state.rooms.find(function (room) { return room.slug === state.preferences.defaultRoom; }) || state.rooms[0];
   const roomStrip = state.rooms.slice(0, 3).map(function (room) {
     return '<button class="focus-floor-room" data-join-room="' + esc(room.id) + '"><span class="room-icon">' + esc(room.icon) + '</span><span><strong>' + esc(room.name) + '</strong><small><i></i><b data-room-count="' + esc(room.slug) + '">' + (state.roomCounts[room.slug] || 0) + '</b> connected</small></span><span class="room-arrow">→</span></button>';
   }).join("");
   const content = '<div class="workspace-head"><div><span class="eyebrow">Your study desk</span><h1>What are you finishing today?</h1></div><div class="date-chip">' + new Date().toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) + '</div></div>' +
-    '<section class="card start-session-card"><div class="session-copy"><span class="eyebrow">Start a focus block</span><h2>Set one target. Join when ready.</h2><p>Your intention appears only in this setup and helps you start with a clear finish line.</p></div><form id="quickSessionForm" class="quick-session"><div class="field"><label for="quickIntention">Session intention</label><input id="quickIntention" name="intention" maxlength="100" required placeholder="e.g. Finish chapter 4 notes"></div><div class="field duration-field"><label for="quickDuration">Time</label><select id="quickDuration" name="duration"><option value="25">25 min</option><option value="50" selected>50 min</option><option value="90">90 min</option></select></div><button class="btn btn-primary"' + (leadRoom ? '' : ' disabled') + '>Choose a room</button></form></section>' +
+    '<section class="card start-session-card"><div class="session-copy"><span class="eyebrow">Start a focus block</span><h2>Set one target. Join when ready.</h2><p>Your intention appears only in this setup and helps you start with a clear finish line.</p></div><form id="quickSessionForm" class="quick-session"><div class="field"><label for="quickIntention">Session intention</label><input id="quickIntention" name="intention" maxlength="100" required placeholder="e.g. Finish chapter 4 notes"></div><div class="field duration-field"><label for="quickDuration">Time</label><select id="quickDuration" name="duration"><option value="25"' + (state.preferences.defaultDuration === 25 ? ' selected' : '') + '>25 min</option><option value="50"' + (state.preferences.defaultDuration === 50 ? ' selected' : '') + '>50 min</option><option value="90"' + (state.preferences.defaultDuration === 90 ? ' selected' : '') + '>90 min</option></select></div><button class="btn btn-primary"' + (leadRoom ? '' : ' disabled') + '>Choose a room</button></form></section>' +
     '<div class="dashboard-layout"><div class="stack"><section class="card focus-floor"><div class="card-title-row"><div><span class="eyebrow">Live focus floor</span><h3>Open rooms</h3></div><button class="btn btn-sm" data-view="rooms">View all</button></div><div class="focus-floor-list">' + (roomStrip || '<div class="empty">Rooms are loading.</div>') + '</div></section><section class="card"><div class="card-title-row"><div><span class="eyebrow">Your plan</span><h3>Today’s goals</h3></div><strong>' + complete + '/' + state.goals.length + '</strong></div><div class="progress"><span style="width:' + progress + '%"></span></div><div style="height:16px"></div>' + goalsList(4) + '<button class="btn btn-sm goals-link" data-view="goals">Manage goals</button></section></div><div class="stack">' + timerCard() + '<section class="card activity-card"><span class="eyebrow">Your momentum</span><div class="mini-stats"><div><strong>' + fmtMinutes(completedMinutes()) + '</strong><span>focused</span></div><div><strong>' + state.sessions.length + '</strong><span>sessions</span></div><div><strong>' + streakDays() + '</strong><span>day streak</span></div></div></section></div></div>';
   appShell(content, "Today");
 }
@@ -280,7 +287,7 @@ function renderPrivate() {
 
 function renderPlus() {
   const active = state.allowance.plan === "plus";
-  appShell('<div class="page-head"><div><span class="eyebrow">A little more room to connect</span><h1>FocusRoom Plus</h1><p>Public rooms and core focus tools always remain free.</p></div>' + (active ? '<span class="plus-badge">✦ YOUR PLAN IS ACTIVE</span>' : '') + '</div><div class="pricing-grid">' + pricingCards() + '</div><section class="card" style="margin-top:24px"><h3>Why these perks?</h3><p>Plus is built around privacy and connection—not artificial status. Private calls, higher encouragement limits, Focus Boosts, full history, themes, and an ad-free experience make the membership useful without weakening the free study experience.</p></section>', "FocusRoom Plus");
+  appShell('<div class="page-head"><div><span class="eyebrow">A little more room to connect</span><h1>FocusRoom Plus</h1><p>Public rooms, timers, goals, focus history, ambience, and light/dark mode remain free.</p></div>' + (active ? '<span class="plus-badge">✦ YOUR PLAN IS ACTIVE</span>' : '') + '</div><div class="pricing-grid">' + pricingCards() + '</div><section class="card" style="margin-top:24px"><h3>What Plus changes</h3><p>Plus unlocks private rooms and higher encouragement limits. It does not reduce the free focus experience or sell visibility in public rooms. Features such as direct messages, channels, favorites, and buddy billing will only be offered after their moderation, blocking, privacy, and subscription rules are fully implemented.</p></section>', "FocusRoom Plus");
 }
 
 function renderBlog() {
@@ -298,12 +305,14 @@ function toggleRow(name, title, description, checked) {
 
 function renderSettings() {
   const p = state.profile;
+  const prefs = state.preferences;
+  const roomOptions = state.rooms.map(function (room) { return '<option value="' + esc(room.slug) + '"' + (prefs.defaultRoom === room.slug ? ' selected' : '') + '>' + esc(room.name) + '</option>'; }).join("");
   appShell('<div class="page-head"><div><span class="eyebrow">You stay in control</span><h1>Privacy & settings</h1><p>Video and audio are handled by the call provider and are not stored by FocusRoom.</p></div></div><section class="card appearance-card"><div><span class="eyebrow">Website ambience</span><h3>Appearance</h3><p>Choose the atmosphere that feels best for your study space.</p></div><div class="theme-choice" role="group" aria-label="Website appearance"><button class="btn ' + (state.theme === "light" ? "active" : "") + '" data-theme="light">☀ Light</button><button class="btn ' + (state.theme === "dark" ? "active" : "") + '" data-theme="dark">☾ Dark</button></div></section><form class="card form" id="privacyForm" style="margin-top:18px">' +
     toggleRow("show_profile", "Public member profile", "Allow signed-in members to see your name, bio, and subject.", p.show_profile) +
     toggleRow("show_country", "Show country", "Display your country or region on your profile.", p.show_country) +
     toggleRow("allow_invites", "Allow private-room invites", "Let other members invite you to private study calls.", p.allow_invites) +
     toggleRow("accepting_encouragements", "Receive encouragements", "Allow members to send you supportive messages.", p.accepting_encouragements) +
-    '<button class="btn btn-primary">Save privacy settings</button></form><section class="card" style="margin-top:18px"><h3>Account</h3><p>Signed in as ' + esc(state.user.email) + '</p><button class="btn btn-danger" data-signout>Sign out</button> <button class="btn" data-privacy>Read privacy summary</button></section>', "Privacy & settings");
+    '<button class="btn btn-primary">Save privacy settings</button></form><form class="card form advanced-settings" id="studyPreferencesForm"><div><span class="eyebrow">Session defaults</span><h3>Study preferences</h3><p>These choices are saved in this browser and prefill your room setup.</p></div><div class="settings-grid"><div class="field"><label>Default focus block</label><select name="defaultDuration"><option value="25"' + (prefs.defaultDuration === 25 ? ' selected' : '') + '>25 minutes</option><option value="50"' + (prefs.defaultDuration === 50 ? ' selected' : '') + '>50 minutes</option><option value="90"' + (prefs.defaultDuration === 90 ? ' selected' : '') + '>90 minutes</option></select></div><div class="field"><label>Quick-start room</label><select name="defaultRoom">' + roomOptions + '</select></div></div>' + toggleRow("defaultCamera", "Camera ready by default", "Keep camera selected when opening the device lobby. You still approve browser access.", prefs.defaultCamera) + toggleRow("defaultMicrophone", "Microphone ready by default", "Keep microphone selected in the device lobby. Public rooms should usually stay muted.", prefs.defaultMicrophone) + toggleRow("soundCues", "Timer sound cues", "Allow a short sound when a focus block finishes.", prefs.soundCues) + toggleRow("compactMode", "Compact dashboard", "Fit more study information on screen with tighter spacing.", prefs.compactMode) + '<button class="btn btn-primary">Save study preferences</button></form><section class="card" style="margin-top:18px"><h3>Account</h3><p>Signed in as ' + esc(state.user.email) + '</p><button class="btn btn-danger" data-signout>Sign out</button> <button class="btn" data-privacy>Read privacy summary</button></section>', "Privacy & settings");
 }
 
 function renderApp() {
@@ -437,12 +446,30 @@ function toggleTimer() {
         clearInterval(state.timerId); state.timerRunning = false;
         await saveFocusSession(state.timerPreset);
         state.timerSeconds = state.timerPreset * 60;
+        playTimerCue();
         showToast("Focus session complete. Great work.");
         renderApp();
       }
     }, 1000);
   } else clearInterval(state.timerId);
   renderApp();
+}
+
+function playTimerCue() {
+  if (!state.preferences.soundCues) return;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return;
+  const context = new AudioCtx();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.frequency.setValueAtTime(660, context.currentTime);
+  oscillator.frequency.setValueAtTime(880, context.currentTime + .14);
+  gain.gain.setValueAtTime(.0001, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(.08, context.currentTime + .02);
+  gain.gain.exponentialRampToValueAtTime(.0001, context.currentTime + .38);
+  oscillator.connect(gain).connect(context.destination);
+  oscillator.start(); oscillator.stop(context.currentTime + .4);
+  oscillator.onended = function () { context.close(); };
 }
 
 async function saveFocusSession(minutes) {
@@ -685,6 +712,25 @@ async function saveProfile(form, privacyOnly) {
   state.profile = result.data; showToast("Settings saved."); renderApp();
 }
 
+function saveStudyPreferences(form) {
+  const data = new FormData(form);
+  state.preferences = {
+    defaultDuration:Number(data.get("defaultDuration") || 50),
+    defaultRoom:String(data.get("defaultRoom") || "deep-focus"),
+    defaultCamera:data.has("defaultCamera"),
+    defaultMicrophone:data.has("defaultMicrophone"),
+    soundCues:data.has("soundCues"),
+    compactMode:data.has("compactMode")
+  };
+  state.joinDraft.duration = state.preferences.defaultDuration;
+  state.joinDraft.camera = state.preferences.defaultCamera;
+  state.joinDraft.microphone = state.preferences.defaultMicrophone;
+  localStorage.setItem("focusroom-study-preferences", JSON.stringify(state.preferences));
+  document.documentElement.classList.toggle("compact-mode", state.preferences.compactMode);
+  showToast("Study preferences saved.");
+  renderSettings();
+}
+
 function checkout(interval) {
   const url = CHECKOUT_URLS[interval];
   if (!url) {
@@ -775,7 +821,8 @@ document.addEventListener("submit", async function (event) {
     const data = new FormData(form);
     state.joinDraft.intention = String(data.get("intention") || "").trim();
     state.joinDraft.duration = Number(data.get("duration") || 50);
-    if (state.rooms[0]) showJoinLobby(state.rooms[0], false);
+    const preferredRoom = state.rooms.find(function (room) { return room.slug === state.preferences.defaultRoom; }) || state.rooms[0];
+    if (preferredRoom) showJoinLobby(preferredRoom, false);
   }
   if (form.id === "joinLobbyForm") {
     const data = new FormData(form);
@@ -800,11 +847,13 @@ document.addEventListener("submit", async function (event) {
   if (form.id === "privateRoomForm") await createPrivateRoom(form);
   if (form.id === "profileForm") await saveProfile(form, false);
   if (form.id === "privacyForm") await saveProfile(form, true);
+  if (form.id === "studyPreferencesForm") saveStudyPreferences(form);
 });
 
 window.addEventListener("beforeunload", function () { if (state.presenceChannel) state.presenceChannel.untrack(); stopAmbient(); });
 
 async function init() {
+  document.documentElement.classList.toggle("compact-mode", state.preferences.compactMode);
   await loadPublicRooms();
   const current = await supabase.auth.getSession();
   state.session = current.data.session;
