@@ -373,6 +373,14 @@ h1, h2, h3 { line-height: 1.08; letter-spacing: -.035em; }
 .theme-choice { display:flex; gap:8px; padding:5px; border:1px solid var(--line); border-radius:16px; background:rgba(127,110,190,.08); }
 .theme-choice .btn { min-width:94px; }
 .theme-choice .btn.active { color:#fff; border-color:transparent; background:linear-gradient(135deg,var(--violet),var(--violet-2)); }
+.advanced-settings { margin-top:18px; }
+.advanced-settings h3 { margin:5px 0 7px; }
+.settings-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:8px 0; }
+html.compact-mode .app-content { padding-top:22px; }
+html.compact-mode .card { padding:18px; border-radius:19px; }
+html.compact-mode .stat-grid,
+html.compact-mode .dashboard-layout,
+html.compact-mode .stack { gap:12px; }
 
 html[data-theme="light"] .topbar,
 html[data-theme="light"] .sidebar,
@@ -454,6 +462,7 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
   .theme-toggle { min-width:40px; }
   .appearance-card { display:block; }
   .theme-choice { margin-top:18px; }
+  .settings-grid { grid-template-columns:1fr; }
   .room-card { grid-template-columns:auto 1fr; }
   .room-card .btn { grid-column:1/-1; }
   .workspace-head { align-items:start; }
