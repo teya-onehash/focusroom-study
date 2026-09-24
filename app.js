@@ -425,13 +425,29 @@ async function joinPublicRoom(roomId) {
   const room = state.rooms.find(function (item) { return item.id === roomId; });
   if (!room) return;
   state.activeRoom = room;
-  mountMeeting(room, false);
+  await mountMeeting(room, false);
 }
 
-function mountMeeting(room, isPrivate) {
+async function ensureJitsi() {
+  if (typeof window.JitsiMeetExternalAPI === "function") return true;
+  return new Promise(function (resolve) {
+    const script = document.createElement("script");
+    const finish = function () { resolve(typeof window.JitsiMeetExternalAPI === "function"); };
+    script.src = "https://meet.jit.si/external_api.js?v=focusroom";
+    script.async = true;
+    script.onload = finish;
+    script.onerror = function () { resolve(false); };
+    document.head.appendChild(script);
+    setTimeout(finish, 8000);
+  });
+}
+
+async function mountMeeting(room, isPrivate) {
   app.insertAdjacentHTML("beforeend", '<section class="meeting-page"><header class="meeting-head"><button class="btn btn-sm" data-leave-meeting>← Leave</button><h3>' + esc(room.name || room.title) + '</h3><span class="meeting-status" id="meetingStatus">Preparing secure controls…</span></header><div id="jitsiMount"></div></section>');
-  if (!window.JitsiMeetExternalAPI) {
-    document.querySelector("#jitsiMount").innerHTML = '<div class="meeting-error"><h2>Call service did not load</h2><p>Check your connection, then try again.</p></div>'; return;
+  const ready = await ensureJitsi();
+  if (!ready) {
+    const directUrl = "https://meet.jit.si/" + encodeURIComponent(room.jitsi_room);
+    document.querySelector("#jitsiMount").innerHTML = '<div class="meeting-error"><h2>Open the room directly</h2><p>Your browser blocked the embedded call. The same live camera room can still open securely in Jitsi.</p><a class="btn btn-primary" href="' + directUrl + '" target="_blank" rel="noopener noreferrer">Open camera room</a><p class="form-note">Camera and microphone permissions are controlled by your browser.</p></div>'; return;
   }
   try {
     state.jitsi = new window.JitsiMeetExternalAPI("meet.jit.si", {
@@ -502,7 +518,7 @@ async function createPrivateRoom(form) {
 
 async function joinPrivateRoom(id) {
   const room = state.privateRooms.find(function (r) { return r.id === id; });
-  if (room) mountMeeting(room, true);
+  if (room) await mountMeeting(room, true);
 }
 
 async function copyInvite(token) {
