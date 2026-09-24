@@ -32,6 +32,7 @@ const state = {
   timerRunning: false,
   timerId: null,
   ambient: "none",
+  theme: document.documentElement.dataset.theme || "dark",
   audio: null,
   authMode: "signup",
   mobileNav: false
@@ -108,8 +109,21 @@ function baseBackground() {
   return '<div class="ambient-bg" aria-hidden="true"></div>';
 }
 
+function themeToggle() {
+  const next = state.theme === "dark" ? "light" : "dark";
+  return '<button class="btn btn-sm theme-toggle" data-theme-toggle aria-label="Switch to ' + next + ' mode" title="Switch to ' + next + ' mode"><span aria-hidden="true">' + (state.theme === "dark" ? "☀" : "☾") + '</span><span class="theme-label">' + (state.theme === "dark" ? "Light" : "Dark") + '</span></button>';
+}
+
+function setTheme(theme) {
+  state.theme = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = state.theme;
+  document.querySelector('meta[name="theme-color"]').setAttribute("content", state.theme === "light" ? "#f8f7fc" : "#090b13");
+  localStorage.setItem("focusroom-theme", state.theme);
+  renderApp();
+}
+
 function publicHeader() {
-  return '<header class="topbar"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>FocusRoom</a><nav class="top-links"><a href="#rooms">Rooms</a><a href="#features">Features</a><a href="#pricing">Plus</a><a href="#journal">Journal</a><button class="btn btn-sm" data-auth="login">Log in</button><button class="btn btn-primary btn-sm" data-auth="signup">Join free</button></nav></header>';
+  return '<header class="topbar"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>FocusRoom</a><nav class="top-links"><a href="#rooms">Rooms</a><a href="#features">Features</a><a href="#pricing">Plus</a><a href="#journal">Journal</a>' + themeToggle() + '<button class="btn btn-sm" data-auth="login">Log in</button><button class="btn btn-primary btn-sm" data-auth="signup">Join free</button></nav></header>';
 }
 
 function roomCards(publicMode) {
@@ -154,7 +168,7 @@ function renderLanding() {
 
 function renderAuth() {
   const signup = state.authMode === "signup";
-  app.innerHTML = baseBackground() + '<main class="auth-shell"><section class="card auth-card"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>FocusRoom</a><div class="auth-tabs"><button class="' + (signup ? 'active' : '') + '" data-auth-tab="signup">Create account</button><button class="' + (!signup ? 'active' : '') + '" data-auth-tab="login">Log in</button></div>' +
+  app.innerHTML = baseBackground() + '<main class="auth-shell"><section class="card auth-card"><div class="auth-head"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>FocusRoom</a>' + themeToggle() + '</div><div class="auth-tabs"><button class="' + (signup ? 'active' : '') + '" data-auth-tab="signup">Create account</button><button class="' + (!signup ? 'active' : '') + '" data-auth-tab="login">Log in</button></div>' +
     '<form class="form" id="authForm">' +
     (signup ? '<div class="field"><label for="displayName">Display name</label><input id="displayName" name="displayName" minlength="2" maxlength="40" required autocomplete="name" placeholder="How others will see you"></div>' : '') +
     '<div class="field"><label for="email">Email</label><input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" minlength="8" required autocomplete="' + (signup ? 'new-password' : 'current-password') + '" placeholder="At least 8 characters"></div>' +
@@ -175,7 +189,7 @@ function navItems() {
 function appShell(content, title) {
   const name = state.profile ? state.profile.display_name : "Student";
   const plus = state.allowance.plan === "plus";
-  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><div class="side-profile"><div class="avatar" style="background:' + esc(state.profile && state.profile.avatar_color || "#7c6cff") + '">' + initials(name) + '</div><div><strong>' + esc(name) + '</strong><small>' + (plus ? '<span class="plus-badge">✦ PLUS</span>' : 'Free member') + '</small></div></div></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div><button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
+  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><div class="side-profile"><div class="avatar" style="background:' + esc(state.profile && state.profile.avatar_color || "#7c6cff") + '">' + initials(name) + '</div><div><strong>' + esc(name) + '</strong><small>' + (plus ? '<span class="plus-badge">✦ PLUS</span>' : 'Free member') + '</small></div></div></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div class="app-top-actions">' + themeToggle() + '<button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
 }
 
 function ambientDock() {
@@ -264,7 +278,7 @@ function toggleRow(name, title, description, checked) {
 
 function renderSettings() {
   const p = state.profile;
-  appShell('<div class="page-head"><div><span class="eyebrow">You stay in control</span><h1>Privacy & settings</h1><p>Video and audio are handled by the call provider and are not stored by FocusRoom.</p></div></div><form class="card form" id="privacyForm">' +
+  appShell('<div class="page-head"><div><span class="eyebrow">You stay in control</span><h1>Privacy & settings</h1><p>Video and audio are handled by the call provider and are not stored by FocusRoom.</p></div></div><section class="card appearance-card"><div><span class="eyebrow">Website ambience</span><h3>Appearance</h3><p>Choose the atmosphere that feels best for your study space.</p></div><div class="theme-choice" role="group" aria-label="Website appearance"><button class="btn ' + (state.theme === "light" ? "active" : "") + '" data-theme="light">☀ Light</button><button class="btn ' + (state.theme === "dark" ? "active" : "") + '" data-theme="dark">☾ Dark</button></div></section><form class="card form" id="privacyForm" style="margin-top:18px">' +
     toggleRow("show_profile", "Public member profile", "Allow signed-in members to see your name, bio, and subject.", p.show_profile) +
     toggleRow("show_country", "Show country", "Display your country or region on your profile.", p.show_country) +
     toggleRow("allow_invites", "Allow private-room invites", "Let other members invite you to private study calls.", p.allow_invites) +
@@ -609,6 +623,8 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.checkout) checkout(target.dataset.checkout);
   if (target.dataset.blog) showBlog(target.dataset.blog);
   if (target.dataset.privacy !== undefined) showPrivacy();
+  if (target.dataset.themeToggle !== undefined) setTheme(state.theme === "dark" ? "light" : "dark");
+  if (target.dataset.theme) setTheme(target.dataset.theme);
   if (target.dataset.ambient) setAmbient(target.dataset.ambient);
   if (target.dataset.toggleNav !== undefined) { state.mobileNav = !state.mobileNav; renderApp(); }
   if (target.dataset.signout !== undefined) await supabase.auth.signOut();
