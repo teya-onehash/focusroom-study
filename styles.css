@@ -131,11 +131,11 @@ h1, h2, h3 { line-height: 1.08; letter-spacing: -.035em; }
 .desk-scene::after { content:""; position:absolute; width:155px; height:105px; left:23%; bottom:108px; border-radius:10px 10px 3px 3px; background:linear-gradient(145deg,#1c2234,#0e111c); border:4px solid #4c546a; box-shadow:0 0 40px rgba(105,224,179,.18); }
 .scene-card {
   position:absolute; left:28px; right:28px; bottom:26px; z-index:2; display:flex; align-items:center; gap:13px;
-  background:rgba(8,10,17,.76); border:1px solid var(--line); padding:14px; border-radius:18px; backdrop-filter:blur(12px);
+  color:#f4f6ff; background:rgba(8,10,17,.84); border:1px solid rgba(255,255,255,.12); padding:14px; border-radius:18px; backdrop-filter:blur(12px);
 }
 .scene-card .pulse { width:10px; height:10px; border-radius:50%; background:var(--mint); box-shadow:0 0 0 7px rgba(101,223,177,.12); }
 .scene-card strong { display:block; }
-.scene-card small { color:var(--muted); }
+.scene-card small { color:#aeb6ca; }
 
 .section { width:min(1200px, calc(100% - 40px)); margin:0 auto; padding:96px 0; }
 .section-head { display:flex; justify-content:space-between; gap:30px; align-items:end; margin-bottom:34px; }
