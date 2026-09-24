@@ -1,5 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js?v=20260924-10";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js?v=20260924-13";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
@@ -24,6 +24,12 @@ const state = {
   sessions: [],
   subscription: null,
   allowance: { plan: "free", encouragements_remaining: 5, boosts_remaining: 0 },
+  admin: null,
+  adminStats: null,
+  adminMembers: [],
+  adminReports: [],
+  adminRooms: [],
+  adminSearch: "",
   encouragements: [],
   members: [],
   memberProfile: null,
@@ -246,6 +252,7 @@ function navItems() {
     ["encouragements","♡","Encouragements"], ["messages","✉","Messages"], ["private","♢","Private calls"], ["plus","✦","Membership"],
     ["blog","▤","Focus journal"], ["profile","●","Profile"], ["settings","⚙","Privacy & settings"]
   ];
+  if (state.admin && state.admin.is_admin) items.push(["admin","◆","Admin center"]);
   return items.map(function (item) {
     return '<button class="side-link ' + (state.view === item[0] ? 'active' : '') + '" data-view="' + item[0] + '"><span class="nav-icon">' + item[1] + '</span>' + item[2] + '</button>';
   }).join("");
@@ -254,7 +261,10 @@ function navItems() {
 function appShell(content, title) {
   const name = state.profile ? state.profile.display_name : "Student";
   const plan = state.allowance.plan === "plus" ? "premium" : state.allowance.plan;
-  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><button class="side-profile" data-view="profile">' + avatarMarkup(state.profile) + '<span><strong>' + esc(name) + '</strong><small>' + (plan !== "free" ? '<span class="plus-badge">✦ ' + esc(String(plan).toUpperCase()) + '</span>' : 'Free member') + '</small></span></button></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div class="app-top-actions">' + themeToggle() + '<button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
+  const membership = state.admin && state.admin.role === "owner"
+    ? '<span class="owner-badge">◆ OWNER · ' + esc(String(plan).toUpperCase()) + '</span>'
+    : (plan !== "free" ? '<span class="plus-badge">✦ ' + esc(String(plan).toUpperCase()) + '</span>' : 'Free member');
+  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><button class="side-profile" data-view="profile">' + avatarMarkup(state.profile) + '<span><strong>' + esc(name) + '</strong><small>' + membership + '</small></span></button></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div class="app-top-actions">' + themeToggle() + '<button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
 }
 
 function ambientDock() {
@@ -471,9 +481,64 @@ function renderSettings() {
     '<button class="btn btn-primary">Save privacy settings</button></form><form class="card form advanced-settings" id="studyPreferencesForm"><div><span class="eyebrow">Session defaults</span><h3>Study preferences</h3><p>These choices are saved in this browser and prefill your room setup.</p></div><div class="settings-grid"><div class="field"><label>Default focus block</label><select name="defaultDuration"><option value="25"' + (prefs.defaultDuration === 25 ? ' selected' : '') + '>25 minutes</option><option value="50"' + (prefs.defaultDuration === 50 ? ' selected' : '') + '>50 minutes</option><option value="90"' + (prefs.defaultDuration === 90 ? ' selected' : '') + '>90 minutes</option></select></div><div class="field"><label>Quick-start room</label><select name="defaultRoom">' + roomOptions + '</select></div></div>' + toggleRow("defaultCamera", "Camera ready by default", "Keep camera selected when opening the device lobby. You still approve browser access.", prefs.defaultCamera) + toggleRow("defaultMicrophone", "Microphone ready by default", "Keep microphone selected in the device lobby. Public rooms should usually stay muted.", prefs.defaultMicrophone) + toggleRow("soundCues", "Timer sound cues", "Allow a short sound when a focus block finishes.", prefs.soundCues) + toggleRow("compactMode", "Compact dashboard", "Fit more study information on screen with tighter spacing.", prefs.compactMode) + '<button class="btn btn-primary">Save study preferences</button></form><section class="card" style="margin-top:18px"><h3>Account</h3><p>Signed in as ' + esc(state.user.email) + '</p><button class="btn btn-danger" data-signout>Sign out</button> <button class="btn" data-privacy>Read privacy summary</button></section>', "Privacy & settings");
 }
 
+function adminPlanOptions(selected) {
+  return [
+    ["free", "No complimentary access"],
+    ["basic", "Basic"],
+    ["premium", "Premium"],
+    ["buddy", "Buddy"]
+  ].map(function (option) {
+    return '<option value="' + option[0] + '"' + (selected === option[0] ? ' selected' : '') + '>' + option[1] + '</option>';
+  }).join("");
+}
+
+function renderAdmin() {
+  if (!state.admin || !state.admin.is_admin) {
+    state.view = "home";
+    return renderHome();
+  }
+
+  const stats = state.adminStats || {};
+  const statCards = [
+    [Number(stats.members_total || 0), "Members"],
+    [Number(stats.premium_members || 0), "Premium access"],
+    [Number(stats.active_rooms || 0), "Open rooms"],
+    [Number(stats.open_reports || 0), "Reports to review"],
+    [Number(stats.messages_today || 0), "Messages today"],
+    [Number(stats.calls_today || 0), "Calls today"]
+  ].map(function (item) {
+    return '<article class="card admin-stat"><strong>' + item[0] + '</strong><span>' + item[1] + '</span></article>';
+  }).join("");
+
+  const members = state.adminMembers.map(function (member) {
+    const role = member.app_role
+      ? '<span class="admin-role ' + esc(member.app_role) + '">' + esc(member.app_role) + '</span>'
+      : '';
+    const controls = member.app_role
+      ? '<span class="admin-lock-note">Role includes permanent Premium</span>'
+      : '<div class="admin-plan-control"><select data-admin-plan-for="' + esc(member.id) + '" aria-label="Complimentary plan for ' + esc(member.display_name) + '">' + adminPlanOptions(member.entitlement_tier || "free") + '</select><button class="btn btn-sm" data-admin-save-plan="' + esc(member.id) + '">Save</button></div>';
+    return '<div class="admin-member-row"><div class="admin-member-identity">' + avatarMarkup(member) + '<span><strong>' + esc(member.display_name) + ' ' + role + '</strong><small>' + esc(member.email) + '</small></span></div><div><span class="admin-cell-label">Current plan</span><strong>' + esc(planLabel(member.current_plan)) + '</strong></div><div><span class="admin-cell-label">Reports</span><strong>' + Number(member.report_count || 0) + '</strong></div><div>' + controls + '</div></div>';
+  }).join("");
+
+  const reports = state.adminReports.map(function (report) {
+    return '<article class="admin-report"><div class="admin-report-head"><span class="report-status ' + esc(report.status) + '">' + esc(report.status) + '</span><time>' + new Date(report.created_at).toLocaleString() + '</time></div><p>' + esc(report.reason) + '</p><div class="admin-report-people"><span><small>Reported by</small><strong>' + esc(report.reporter_name) + '</strong><em>' + esc(report.reporter_email) + '</em></span><span><small>Reported member</small><strong>' + esc(report.reported_name) + '</strong><em>' + esc(report.reported_email) + '</em></span><span><small>Context</small><strong>' + esc(report.context) + '</strong></span></div><div class="admin-report-actions"><button class="btn btn-sm" data-admin-report="' + esc(report.report_id) + '" data-report-status="reviewing">Reviewing</button><button class="btn btn-sm btn-mint" data-admin-report="' + esc(report.report_id) + '" data-report-status="resolved">Resolve</button><button class="btn btn-sm" data-admin-report="' + esc(report.report_id) + '" data-report-status="dismissed">Dismiss</button></div></article>';
+  }).join("");
+
+  const rooms = state.adminRooms.map(function (room) {
+    return '<div class="admin-room-row"><span class="room-icon">' + esc(room.icon) + '</span><div><strong>' + esc(room.name) + '</strong><small>' + esc(room.description) + '</small></div><span class="room-state ' + (room.active ? 'open' : 'closed') + '">' + (room.active ? 'Open' : 'Closed') + '</span><button class="btn btn-sm" data-admin-room="' + esc(room.id) + '" data-room-active="' + (!room.active) + '">' + (room.active ? 'Close room' : 'Open room') + '</button></div>';
+  }).join("");
+
+  const content = '<section class="card admin-hero"><div><span class="eyebrow">Private owner workspace</span><h1>Admin center</h1><p>Manage member access, safety reports, and public room availability. Every change is checked and recorded on the server.</p></div><div class="owner-access-card"><span class="owner-badge">◆ OWNER</span><strong>Premium included</strong><small>No charge and no Stripe subscription</small></div></section>' +
+    '<div class="admin-stat-grid">' + statCards + '</div>' +
+    '<section class="card admin-section"><div class="admin-section-head"><div><span class="eyebrow">Members</span><h2>Plans and access</h2></div><form id="adminSearchForm" class="admin-search"><input name="search" maxlength="100" value="' + esc(state.adminSearch) + '" placeholder="Search name or email" aria-label="Search members"><button class="btn btn-sm">Search</button></form></div><div class="admin-member-list">' + (members || '<div class="empty">No members match this search.</div>') + '</div></section>' +
+    '<div class="admin-two-column"><section class="card admin-section"><div class="admin-section-head"><div><span class="eyebrow">Safety</span><h2>Reports</h2></div><button class="btn btn-sm" data-admin-refresh>Refresh</button></div><div class="admin-report-list">' + (reports || '<div class="empty">No reports need review.</div>') + '</div></section><section class="card admin-section"><div class="admin-section-head"><div><span class="eyebrow">Live spaces</span><h2>Public rooms</h2></div></div><div class="admin-room-list">' + (rooms || '<div class="empty">No rooms found.</div>') + '</div><p class="admin-footnote">At least one public room must remain open.</p></section></div>';
+
+  appShell(content, "Admin center");
+}
+
 function renderApp() {
   if (!state.session) return renderLanding();
-  const renderers = { home:renderHome, rooms:renderRooms, goals:renderGoals, encouragements:renderEncouragements, messages:renderMessages, member:renderMemberProfile, private:renderPrivate, plus:renderPlus, blog:renderBlog, profile:renderProfile, settings:renderSettings };
+  const renderers = { home:renderHome, rooms:renderRooms, goals:renderGoals, encouragements:renderEncouragements, messages:renderMessages, member:renderMemberProfile, private:renderPrivate, plus:renderPlus, blog:renderBlog, profile:renderProfile, settings:renderSettings, admin:renderAdmin };
   (renderers[state.view] || renderHome)();
 }
 
@@ -515,12 +580,14 @@ async function loadUserData() {
     supabase.rpc("list_member_profiles", { p_limit:24 }),
     supabase.from("private_rooms").select("*").order("created_at", { ascending:false }),
     supabase.rpc("list_dm_conversations"),
-    supabase.rpc("list_pending_dm_calls")
+    supabase.rpc("list_pending_dm_calls"),
+    supabase.rpc("get_admin_access")
   ]);
   if (results[0].error) showToast(results[0].error.message, true);
   if (results[6].error) showToast(results[6].error.message, true);
   if (results[8].error) showToast(results[8].error.message, true);
   if (results[9].error) showToast(results[9].error.message, true);
+  if (results[10].error) showToast(results[10].error.message, true);
   state.profile = results[0].data || { id:userId, display_name:state.user.email.split("@")[0], bio:"", country:"", subject:"", avatar_color:"#7c6cff", avatar_path:null, show_profile:true, show_country:false, allow_invites:true, accepting_dms:true, accepting_encouragements:true };
   state.goals = results[1].data || [];
   state.sessions = results[2].data || [];
@@ -531,7 +598,25 @@ async function loadUserData() {
   state.privateRooms = results[7].data || [];
   state.conversations = results[8].data || [];
   state.pendingDmCalls = results[9].data || [];
+  state.admin = results[10].data && results[10].data[0] ? results[10].data[0] : null;
+  if (state.admin && state.admin.is_admin) await loadAdminData(state.adminSearch);
   await processInvite();
+}
+
+async function loadAdminData(search) {
+  if (!state.admin || !state.admin.is_admin) return;
+  const results = await Promise.all([
+    supabase.rpc("get_admin_dashboard"),
+    supabase.rpc("admin_list_members", { p_search:String(search || ""), p_limit:50 }),
+    supabase.rpc("admin_list_reports", { p_status:null, p_limit:50 }),
+    supabase.rpc("admin_list_rooms")
+  ]);
+  const failed = results.find(function (result) { return result.error; });
+  if (failed) showToast(failed.error.message, true);
+  state.adminStats = results[0].data && results[0].data[0] ? results[0].data[0] : null;
+  state.adminMembers = results[1].data || [];
+  state.adminReports = results[2].data || [];
+  state.adminRooms = results[3].data || [];
 }
 
 async function processInvite() {
@@ -1312,6 +1397,55 @@ function saveStudyPreferences(form) {
   renderSettings();
 }
 
+async function saveAdminEntitlement(userId) {
+  const select = Array.from(document.querySelectorAll("[data-admin-plan-for]")).find(function (element) {
+    return element.dataset.adminPlanFor === userId;
+  });
+  if (!select) return;
+  const result = await supabase.rpc("admin_set_entitlement", {
+    p_user_id:userId,
+    p_tier:select.value,
+    p_expires_at:null,
+    p_reason:"Granted from the FocusRoom admin center"
+  });
+  if (result.error) return showToast(result.error.message, true);
+  await loadAdminData(state.adminSearch);
+  showToast(select.value === "free" ? "Complimentary access removed." : planLabel(select.value) + " access granted.");
+  renderAdmin();
+}
+
+async function updateAdminReport(reportId, status) {
+  const result = await supabase.rpc("admin_update_report", {
+    p_report_id:reportId,
+    p_status:status,
+    p_note:"Updated from the FocusRoom admin center"
+  });
+  if (result.error) return showToast(result.error.message, true);
+  await loadAdminData(state.adminSearch);
+  showToast("Report marked " + status + ".");
+  renderAdmin();
+}
+
+async function setAdminRoomActive(roomId, active) {
+  const result = await supabase.rpc("admin_set_room_active", {
+    p_room_id:roomId,
+    p_active:active
+  });
+  if (result.error) return showToast(result.error.message, true);
+  await Promise.all([loadAdminData(state.adminSearch), loadPublicRooms()]);
+  showToast(active ? "Room opened." : "Room closed.");
+  renderAdmin();
+}
+
+async function searchAdminMembers(form) {
+  const data = new FormData(form);
+  state.adminSearch = String(data.get("search") || "").trim();
+  const result = await supabase.rpc("admin_list_members", { p_search:state.adminSearch, p_limit:50 });
+  if (result.error) return showToast(result.error.message, true);
+  state.adminMembers = result.data || [];
+  renderAdmin();
+}
+
 function checkout(interval) {
   const url = CHECKOUT_URLS[interval];
   if (!url) {
@@ -1387,6 +1521,10 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.profileOptions) showReportModal(target.dataset.profileOptions, null);
   if (target.dataset.reportMessage) showReportModal(target.dataset.reportUser, target.dataset.reportMessage);
   if (target.dataset.blockMember) await blockMember(target.dataset.blockMember);
+  if (target.dataset.adminSavePlan) await saveAdminEntitlement(target.dataset.adminSavePlan);
+  if (target.dataset.adminReport && target.dataset.reportStatus) await updateAdminReport(target.dataset.adminReport, target.dataset.reportStatus);
+  if (target.dataset.adminRoom) await setAdminRoomActive(target.dataset.adminRoom, target.dataset.roomActive === "true");
+  if (target.dataset.adminRefresh !== undefined) { await loadAdminData(state.adminSearch); renderAdmin(); showToast("Admin data refreshed."); }
   if (target.dataset.removeAvatar !== undefined) await removeAvatar();
   if (target.dataset.joinRoom) await joinPublicRoom(target.dataset.joinRoom);
   if (target.dataset.checkDevices !== undefined) await checkDevices();
@@ -1457,6 +1595,7 @@ document.addEventListener("submit", async function (event) {
   if (form.id === "profileForm") await saveProfile(form, false);
   if (form.id === "privacyForm") await saveProfile(form, true);
   if (form.id === "studyPreferencesForm") saveStudyPreferences(form);
+  if (form.id === "adminSearchForm") await searchAdminMembers(form);
 });
 
 window.addEventListener("beforeunload", function () {
@@ -1483,7 +1622,7 @@ async function init() {
       else {
         if (state.dmChannel) { await supabase.removeChannel(state.dmChannel); state.dmChannel = null; }
         if (state.dmCallChannel) { await supabase.removeChannel(state.dmCallChannel); state.dmCallChannel = null; }
-        state.profile = null; state.memberProfile = null; state.conversations = []; state.messages = []; state.dmCalls = []; state.pendingDmCalls = []; state.activeDmCallId = null; state.view = "home";
+        state.profile = null; state.memberProfile = null; state.conversations = []; state.messages = []; state.dmCalls = []; state.pendingDmCalls = []; state.activeDmCallId = null; state.admin = null; state.adminStats = null; state.adminMembers = []; state.adminReports = []; state.adminRooms = []; state.view = "home";
       }
       renderApp();
       if (session) { subscribeToDmCalls(); notifyNextIncomingCall(); }

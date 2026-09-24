@@ -242,14 +242,14 @@ h1, h2, h3 { line-height: 1.08; letter-spacing: -.035em; }
   position:fixed; inset:0 auto 0 0; width:250px; padding:25px 18px; border-right:1px solid var(--line);
   background:rgba(10,12,20,.88); backdrop-filter:blur(24px); z-index:20; display:flex; flex-direction:column;
 }
-.side-nav { display:grid; gap:5px; margin-top:30px; }
+.side-nav { display:grid; gap:5px; margin-top:30px; flex:1; min-height:0; overflow-y:auto; padding-right:3px; }
 .side-link {
   display:flex; align-items:center; gap:12px; width:100%; padding:11px 13px; border:0; border-radius:12px;
   background:none; color:var(--muted); cursor:pointer; text-align:left; font-weight:690;
 }
 .side-link:hover, .side-link.active { color:white; background:rgba(255,255,255,.065); }
 .nav-icon { width:22px; text-align:center; }
-.side-profile { width:100%; margin-top:auto; padding:18px 0 0; border:0; border-top:1px solid var(--line); display:flex; align-items:center; gap:10px; color:var(--text); background:none; text-align:left; cursor:pointer; }
+.side-profile { width:100%; margin-top:14px; padding:18px 0 0; border:0; border-top:1px solid var(--line); display:flex; align-items:center; gap:10px; color:var(--text); background:none; text-align:left; cursor:pointer; }
 .side-profile:hover strong { color:var(--mint); }
 .avatar { width:38px; height:38px; border-radius:13px; display:grid; place-items:center; color:white; font-weight:900; background:var(--violet); flex:0 0 auto; overflow:hidden; }
 .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
@@ -338,6 +338,62 @@ h1, h2, h3 { line-height: 1.08; letter-spacing: -.035em; }
 .allowance { display:flex; gap:16px; flex-wrap:wrap; }
 .allowance > div { flex:1; min-width:160px; padding:14px; border:1px solid var(--line); border-radius:16px; }
 .allowance strong { display:block; font-size:26px; }
+.owner-badge { display:inline-flex; align-items:center; gap:6px; width:max-content; color:#d9fff3; background:linear-gradient(120deg,rgba(34,179,139,.23),rgba(111,91,232,.24)); border:1px solid rgba(101,223,177,.34); padding:5px 9px; border-radius:999px; font-size:10px; font-weight:900; letter-spacing:.05em; }
+
+.admin-hero { display:grid; grid-template-columns:1fr auto; align-items:center; gap:34px; padding:31px; margin-bottom:16px; background:linear-gradient(135deg,rgba(101,223,177,.12),rgba(112,93,232,.17),var(--panel)); }
+.admin-hero h1 { margin:7px 0 9px; font-size:42px; }
+.admin-hero p { max-width:650px; margin:0; }
+.owner-access-card { min-width:230px; display:grid; gap:7px; padding:18px; border:1px solid rgba(101,223,177,.22); border-radius:18px; background:rgba(8,12,20,.26); }
+.owner-access-card strong { font-size:18px; }
+.owner-access-card small { color:var(--muted); }
+.admin-stat-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:16px; }
+.admin-stat { padding:17px; }
+.admin-stat strong, .admin-stat span { display:block; }
+.admin-stat strong { font-size:29px; letter-spacing:-.04em; }
+.admin-stat span { margin-top:4px; color:var(--muted); font-size:11px; }
+.admin-section { padding:0; overflow:hidden; margin-bottom:16px; }
+.admin-section-head { min-height:88px; display:flex; align-items:center; justify-content:space-between; gap:18px; padding:18px 21px; border-bottom:1px solid var(--line); }
+.admin-section-head h2 { margin:5px 0 0; font-size:24px; }
+.admin-search { display:flex; gap:7px; }
+.admin-search input, .admin-plan-control select { min-height:39px; color:var(--text); background:var(--bg-soft); border:1px solid var(--line); border-radius:11px; padding:8px 10px; outline:none; }
+.admin-search input { width:min(260px,42vw); }
+.admin-search input:focus, .admin-plan-control select:focus { border-color:var(--violet); box-shadow:0 0 0 3px rgba(141,124,255,.13); }
+.admin-member-list { display:grid; }
+.admin-member-row { display:grid; grid-template-columns:minmax(240px,1.7fr) .55fr .35fr minmax(235px,1.2fr); align-items:center; gap:16px; padding:16px 21px; border-bottom:1px solid var(--line); }
+.admin-member-row:last-child { border-bottom:0; }
+.admin-member-identity { min-width:0; display:flex; align-items:center; gap:11px; }
+.admin-member-identity > span { min-width:0; }
+.admin-member-identity strong, .admin-member-identity small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.admin-member-identity small { color:var(--muted); margin-top:2px; }
+.admin-role { display:inline-flex; margin-left:5px; padding:3px 6px; border-radius:999px; color:var(--mint); background:rgba(101,223,177,.09); border:1px solid rgba(101,223,177,.2); font-size:9px; text-transform:uppercase; letter-spacing:.06em; vertical-align:2px; }
+.admin-role.owner { color:#fbe5a6; background:rgba(255,200,107,.09); border-color:rgba(255,200,107,.25); }
+.admin-cell-label { display:block; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+.admin-plan-control { display:grid; grid-template-columns:1fr auto; gap:7px; }
+.admin-plan-control select { min-width:0; width:100%; }
+.admin-lock-note { color:var(--muted); font-size:11px; }
+.admin-two-column { display:grid; grid-template-columns:1.2fr .8fr; gap:16px; align-items:start; }
+.admin-report-list, .admin-room-list { display:grid; }
+.admin-report { padding:19px 21px; border-bottom:1px solid var(--line); }
+.admin-report:last-child { border-bottom:0; }
+.admin-report-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.admin-report-head time { color:var(--muted); font-size:11px; }
+.report-status, .room-state { display:inline-flex; width:max-content; padding:4px 7px; border-radius:999px; font-size:9px; font-weight:900; text-transform:uppercase; letter-spacing:.07em; }
+.report-status.open, .report-status.reviewing { color:#2a1900; background:var(--amber); }
+.report-status.resolved, .room-state.open { color:#061a13; background:var(--mint); }
+.report-status.dismissed, .room-state.closed { color:var(--muted); background:rgba(255,255,255,.08); }
+.admin-report > p { margin:13px 0; color:var(--text); white-space:pre-wrap; overflow-wrap:anywhere; }
+.admin-report-people { display:grid; grid-template-columns:1fr 1fr .6fr; gap:10px; }
+.admin-report-people span { min-width:0; padding:10px; border-radius:12px; background:rgba(255,255,255,.035); }
+.admin-report-people small, .admin-report-people strong, .admin-report-people em { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.admin-report-people small { color:var(--muted); font-size:9px; text-transform:uppercase; letter-spacing:.06em; }
+.admin-report-people em { color:var(--muted); font-size:10px; font-style:normal; }
+.admin-report-actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:13px; }
+.admin-room-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:11px; padding:15px 18px; border-bottom:1px solid var(--line); }
+.admin-room-row:last-child { border-bottom:0; }
+.admin-room-row .room-icon { width:41px; height:41px; border-radius:13px; font-size:18px; }
+.admin-room-row strong, .admin-room-row small { display:block; }
+.admin-room-row small { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.admin-footnote { margin:0; padding:13px 18px; border-top:1px solid var(--line); font-size:11px; }
 .inbox-list { display:grid; gap:10px; }
 .inbox-item { display:flex; gap:12px; align-items:start; padding:14px; border-radius:14px; background:rgba(255,255,255,.035); }
 .inbox-item .meta { color:var(--muted); font-size:12px; }
@@ -556,6 +612,10 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
   .room-info-grid { grid-template-columns:1fr; }
   .profile-editor { grid-template-columns:270px 1fr; }
   .messages-layout { grid-template-columns:285px minmax(0,1fr); }
+  .admin-stat-grid { grid-template-columns:repeat(3,1fr); }
+  .admin-two-column { grid-template-columns:1fr; }
+  .admin-member-row { grid-template-columns:minmax(220px,1.5fr) .55fr .35fr; }
+  .admin-member-row > div:last-child { grid-column:1/-1; }
 }
 
 @media (max-width: 760px) {
@@ -610,6 +670,16 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
   .conversation-scroll { max-height:230px; }
   .message-panel { min-height:620px; }
   .message-empty { min-height:420px; }
+  .admin-hero { grid-template-columns:1fr; }
+  .owner-access-card { min-width:0; }
+  .admin-section-head { align-items:stretch; flex-direction:column; }
+  .admin-search input { width:100%; }
+  .admin-member-row { grid-template-columns:1fr 1fr; }
+  .admin-member-identity { grid-column:1/-1; }
+  .admin-member-row > div:last-child { grid-column:1/-1; }
+  .admin-report-people { grid-template-columns:1fr; }
+  .admin-room-row { grid-template-columns:auto minmax(0,1fr) auto; }
+  .admin-room-row .btn { grid-column:1/-1; }
 }
 
 @media (max-width: 460px) {
@@ -639,6 +709,14 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
   .message-person .avatar { width:38px; height:38px; }
   .dm-call-event { width:100%; grid-template-columns:auto minmax(0,1fr); }
   .dm-call-event-actions { grid-column:1/-1; display:grid; grid-template-columns:1fr 1fr; }
+  .admin-hero h1 { font-size:34px; }
+  .admin-stat-grid { grid-template-columns:1fr 1fr; }
+  .admin-search { display:grid; grid-template-columns:1fr auto; }
+  .admin-member-row { grid-template-columns:1fr; }
+  .admin-member-identity, .admin-member-row > div:last-child { grid-column:auto; }
+  .admin-plan-control { grid-template-columns:1fr; }
+  .admin-room-row { grid-template-columns:auto minmax(0,1fr); }
+  .admin-room-row .room-state { justify-self:start; }
 }
 
 @media (prefers-reduced-motion: reduce) {
