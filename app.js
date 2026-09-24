@@ -1,5 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js?v=20260924-7";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js?v=20260924-10";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
@@ -26,6 +26,17 @@ const state = {
   allowance: { plan: "free", encouragements_remaining: 5, boosts_remaining: 0 },
   encouragements: [],
   members: [],
+  memberProfile: null,
+  profileReturnView: "encouragements",
+  conversations: [],
+  activeConversationId: null,
+  messages: [],
+  messageMedia: {},
+  dmChannel: null,
+  voiceRecorder: null,
+  voiceStream: null,
+  voiceChunks: [],
+  voiceTimer: null,
   privateRooms: [],
   roomCounts: {},
   channels: [],
@@ -92,6 +103,26 @@ function esc(value) {
 
 function initials(name) {
   return String(name || "S").split(/\s+/).slice(0, 2).map(function (part) { return part[0]; }).join("").toUpperCase();
+}
+
+function avatarUrl(path) {
+  if (!path) return "";
+  return supabase.storage.from("profile-avatars").getPublicUrl(path).data.publicUrl || "";
+}
+
+function avatarMarkup(person, extraClass) {
+  const item = person || {};
+  const url = avatarUrl(item.avatar_path);
+  const classes = "avatar" + (extraClass ? " " + extraClass : "") + (url ? " has-photo" : "");
+  const color = esc(item.avatar_color || "#7c6cff");
+  return '<span class="' + classes + '" style="background:' + color + '">' +
+    (url ? '<img src="' + esc(url) + '" alt="" loading="lazy" referrerpolicy="no-referrer">' : initials(item.display_name)) +
+    '</span>';
+}
+
+function planLabel(plan) {
+  const value = plan === "plus" ? "premium" : (plan || "free");
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function fmtMinutes(total) {
@@ -205,7 +236,7 @@ function renderAuth() {
 function navItems() {
   const items = [
     ["home","⌂","Home"], ["rooms","◎","Study rooms"], ["goals","✓","Goals & progress"],
-    ["encouragements","♡","Encouragements"], ["private","♢","Private calls"], ["plus","✦","Membership"],
+    ["encouragements","♡","Encouragements"], ["messages","✉","Messages"], ["private","♢","Private calls"], ["plus","✦","Membership"],
     ["blog","▤","Focus journal"], ["profile","●","Profile"], ["settings","⚙","Privacy & settings"]
   ];
   return items.map(function (item) {
@@ -216,7 +247,7 @@ function navItems() {
 function appShell(content, title) {
   const name = state.profile ? state.profile.display_name : "Student";
   const plan = state.allowance.plan === "plus" ? "premium" : state.allowance.plan;
-  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><div class="side-profile"><div class="avatar" style="background:' + esc(state.profile && state.profile.avatar_color || "#7c6cff") + '">' + initials(name) + '</div><div><strong>' + esc(name) + '</strong><small>' + (plan !== "free" ? '<span class="plus-badge">✦ ' + esc(String(plan).toUpperCase()) + '</span>' : 'Free member') + '</small></div></div></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div class="app-top-actions">' + themeToggle() + '<button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
+  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span>FocusRoom</div><nav class="side-nav">' + navItems() + '</nav><button class="side-profile" data-view="profile">' + avatarMarkup(state.profile) + '<span><strong>' + esc(name) + '</strong><small>' + (plan !== "free" ? '<span class="plus-badge">✦ ' + esc(String(plan).toUpperCase()) + '</span>' : 'Free member') + '</small></span></button></aside><main class="main"><header class="app-top"><div style="display:flex;align-items:center;gap:12px"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2></div><div class="app-top-actions">' + themeToggle() + '<button class="btn btn-sm" data-view="rooms">Join a room</button></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
 }
 
 function ambientDock() {
@@ -272,12 +303,12 @@ function renderGoals() {
 function renderEncouragements() {
   const inbox = state.encouragements.map(function (item) {
     const sender = item.sender || {};
-    return '<div class="inbox-item"><div class="avatar" style="background:' + esc(sender.avatar_color || "#7c6cff") + '">' + initials(sender.display_name) + '</div><div><strong>' + esc(sender.display_name || "FocusRoom member") + '</strong> sent ' + (item.kind === "focus_boost" ? '<span class="plus-badge">✦ FOCUS BOOST</span>' : 'an encouragement') + '<p>' + esc(item.message || "Keep going — you’ve got this.") + '</p><span class="meta">' + new Date(item.created_at).toLocaleString() + '</span></div></div>';
+    return '<div class="inbox-item"><button class="avatar-button" data-member-profile="' + esc(item.sender_id) + '" aria-label="Open ' + esc(sender.display_name || "member") + ' profile">' + avatarMarkup(sender) + '</button><div><button class="profile-name" data-member-profile="' + esc(item.sender_id) + '">' + esc(sender.display_name || "FocusRoom member") + '</button> sent ' + (item.kind === "focus_boost" ? '<span class="plus-badge">✦ FOCUS BOOST</span>' : 'an encouragement') + '<p>' + esc(item.message || "Keep going — you’ve got this.") + '</p><span class="meta">' + new Date(item.created_at).toLocaleString() + '</span></div></div>';
   }).join("");
   const members = state.members.map(function (member) {
-    return '<article class="card member-card"><div class="avatar" style="background:' + esc(member.avatar_color) + '">' + initials(member.display_name) + '</div><h3>' + esc(member.display_name) + '</h3><p>' + esc(member.subject || "Working toward a goal") + '</p><div class="actions"><button class="btn btn-sm" data-encourage="' + member.id + '">♡ Encourage</button><button class="btn btn-sm btn-primary" data-boost="' + member.id + '">✦ Boost</button></div></article>';
+    return '<article class="card member-card"><button class="member-profile-link" data-member-profile="' + esc(member.id) + '">' + avatarMarkup(member, "member-avatar") + '<span><strong>' + esc(member.display_name) + '</strong><small>' + esc(member.subject || "Working toward a goal") + '</small></span></button><div class="member-social"><span><strong>' + Number(member.pinned_by_count || 0) + '</strong> pinned by</span><button class="pin-chip ' + (member.viewer_has_pinned ? 'active' : '') + '" data-' + (member.viewer_has_pinned ? 'unpin' : 'pin') + '-member="' + esc(member.id) + '">' + (member.viewer_has_pinned ? '✓ Pinned' : '＋ Pin') + '</button></div><div class="actions"><button class="btn btn-sm" data-message-member="' + esc(member.id) + '">Message</button><button class="btn btn-sm" data-encourage="' + esc(member.id) + '">♡ Encourage</button></div></article>';
   }).join("");
-  appShell('<div class="page-head"><div><span class="eyebrow">Kind energy, not popularity</span><h1>Encouragements</h1><p>Credits reset every Monday. Focus Boosts are a Plus feature.</p></div></div><div class="allowance"><div><span>Encouragements left</span><strong>' + state.allowance.encouragements_remaining + '</strong></div><div><span>Focus Boosts left</span><strong>' + state.allowance.boosts_remaining + '</strong></div><div><span>Your plan</span><strong>' + (state.allowance.plan === "plus" ? "Plus" : "Free") + '</strong></div></div><h2 style="margin-top:34px">Encourage someone</h2><div class="member-grid">' + (members || '<div class="empty">More public profiles will appear as the community grows.</div>') + '</div><h2 style="margin-top:34px">Your inbox</h2><div class="card inbox-list">' + (inbox || '<div class="empty">Encouragements you receive will appear here.</div>') + '</div>', "Encouragements");
+  appShell('<div class="page-head"><div><span class="eyebrow">Your study circle</span><h1>Find people worth pinning</h1><p>Open a student’s profile, pin them to follow their progress, or start a private message.</p></div></div><div class="allowance"><div><span>Encouragements today</span><strong>' + state.allowance.encouragements_remaining + '</strong></div><div><span>Focus Boosts this week</span><strong>' + state.allowance.boosts_remaining + '</strong></div><div><span>Your plan</span><strong>' + esc(planLabel(state.allowance.plan)) + '</strong></div></div><h2 style="margin-top:34px">Discover students</h2><div class="member-grid">' + (members || '<div class="empty">More public profiles will appear as the community grows.</div>') + '</div><h2 style="margin-top:34px">Your inbox</h2><div class="card inbox-list">' + (inbox || '<div class="empty">Encouragements you receive will appear here.</div>') + '</div>', "Community");
 }
 
 function renderPrivate() {
@@ -298,9 +329,85 @@ function renderBlog() {
   appShell('<div class="page-head"><div><span class="eyebrow">Focus journal</span><h1>Guides for better sessions</h1><p>Practical, calm advice you can use today.</p></div></div><div class="grid-3">' + blogCards() + '</div><section class="card" style="margin-top:18px"><h3>Weekly reflection</h3><p>What helped you focus this week? What got in the way? Choose one small adjustment for your next session.</p></section>', "Focus journal");
 }
 
+function renderMemberProfile() {
+  const p = state.memberProfile;
+  if (!p) {
+    appShell('<button class="back-link" data-profile-back>← Back</button><div class="profile-loading"><div class="skeleton"></div><div class="skeleton"></div></div>', "Member profile");
+    return;
+  }
+  const joined = p.joined_at ? new Date(p.joined_at).toLocaleDateString(undefined, { month:"long", year:"numeric" }) : "";
+  const pinButton = p.is_self
+    ? '<button class="btn btn-primary" data-view="profile">Edit profile</button>'
+    : '<button class="btn ' + (p.viewer_has_pinned ? '' : 'btn-primary') + '" data-' + (p.viewer_has_pinned ? 'unpin' : 'pin') + '-member="' + esc(p.id) + '">' + (p.viewer_has_pinned ? '✓ Pinned' : '＋ Pin profile') + '</button>';
+  const messageButton = p.is_self ? '' : (p.accepting_dms
+    ? '<button class="btn" data-message-member="' + esc(p.id) + '">Message</button>'
+    : '<button class="btn" disabled title="This member has paused new messages">Messages paused</button>');
+  const safetyButton = p.is_self ? '' : '<button class="btn icon-btn" data-profile-options="' + esc(p.id) + '" aria-label="Profile safety options">•••</button>';
+  appShell('<button class="back-link" data-profile-back>← Back</button><section class="card public-profile"><div class="profile-cover"><span></span><span></span></div><div class="profile-main"><div class="profile-identity">' + avatarMarkup(p, "profile-avatar") + '<div><span class="eyebrow">FocusRoom profile</span><h1>' + esc(p.display_name) + '</h1><p>' + esc(p.subject || "Working toward a goal") + (p.country ? ' · ' + esc(p.country) : '') + '</p></div></div><div class="profile-actions">' + pinButton + messageButton + safetyButton + '</div></div><div class="profile-stats"><div><strong>' + Number(p.pinned_by_count || 0) + '</strong><span>Pinned by</span></div><div><strong>' + Number(p.pins_count || 0) + '</strong><span>Profiles pinned</span></div><div><strong>' + (joined || 'New') + '</strong><span>Joined</span></div></div><div class="profile-about"><span class="eyebrow">About</span><p>' + esc(p.bio || "This student has not added a bio yet.") + '</p></div></section><section class="profile-note"><span>Pin = follow</span><p>Pinning follows this study profile and adds one to their pinned count. You can unpin at any time.</p></section>', esc(p.display_name));
+}
+
+function activeConversation() {
+  return state.conversations.find(function (item) { return item.id === state.activeConversationId; }) || null;
+}
+
+function conversationPerson(conversation) {
+  return {
+    id: conversation.other_user_id,
+    display_name: conversation.other_display_name,
+    avatar_color: conversation.other_avatar_color,
+    avatar_path: conversation.other_avatar_path
+  };
+}
+
+function messagePreview(conversation) {
+  if (conversation.last_kind === "image") return "Photo";
+  if (conversation.last_kind === "voice") return "Voice message";
+  return conversation.last_message || (conversation.accepted ? "Start the conversation" : "Message request");
+}
+
+function renderMessages() {
+  const active = activeConversation();
+  const conversationRows = state.conversations.map(function (conversation) {
+    const person = conversationPerson(conversation);
+    return '<button class="conversation-row ' + (conversation.id === state.activeConversationId ? 'active' : '') + '" data-conversation="' + esc(conversation.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + esc(messagePreview(conversation)) + '</small></span>' + (!conversation.accepted ? '<i>Request</i>' : '') + '</button>';
+  }).join("");
+
+  let panel = '<div class="message-empty"><span>✉</span><h2>Your messages live here</h2><p>Open a student profile and choose Message to begin.</p></div>';
+  if (active) {
+    const person = conversationPerson(active);
+    const messages = state.messages.map(function (message) {
+      const mine = message.sender_id === state.user.id;
+      let body = '<p>' + esc(message.body) + '</p>';
+      if (message.kind === "image") body = state.messageMedia[message.id]
+        ? '<img class="dm-image" src="' + esc(state.messageMedia[message.id]) + '" alt="Photo sent in this conversation">'
+        : '<p class="media-loading">Loading photo…</p>';
+      if (message.kind === "voice") body = state.messageMedia[message.id]
+        ? '<audio controls preload="metadata" src="' + esc(state.messageMedia[message.id]) + '"></audio>'
+        : '<p class="media-loading">Loading voice message…</p>';
+      return '<div class="message-row ' + (mine ? 'mine' : 'theirs') + '"><div class="message-bubble">' + body + '<span>' + new Date(message.created_at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + '</span></div>' + (!mine ? '<button class="message-report" data-report-message="' + esc(message.id) + '" data-report-user="' + esc(person.id) + '" aria-label="Report message">•••</button>' : '') + '</div>';
+    }).join("");
+    const recipientRequest = !active.accepted && active.created_by !== state.user.id;
+    const senderWaiting = !active.accepted && active.created_by === state.user.id && state.messages.length > 0;
+    const canCompose = active.accepted || (!active.accepted && active.created_by === state.user.id && state.messages.length === 0);
+    const requestBanner = recipientRequest
+      ? '<div class="message-request"><div><strong>Message request</strong><p>Accept before replying. You can also block or report this member.</p></div><button class="btn btn-primary btn-sm" data-accept-dm="' + esc(active.id) + '">Accept</button></div>'
+      : (senderWaiting ? '<div class="message-request waiting"><div><strong>Request sent</strong><p>You can continue after ' + esc(person.display_name) + ' accepts.</p></div></div>' : '');
+    const composer = canCompose
+      ? '<form class="dm-composer" id="dmForm"><textarea name="message" maxlength="2000" rows="1" required placeholder="Message ' + esc(person.display_name) + '"></textarea><label class="btn icon-btn" title="Send a photo"><input id="dmMediaInput" type="file" accept="image/jpeg,image/png,image/webp" hidden><span aria-hidden="true">▧</span></label><button class="btn icon-btn record-button ' + (state.voiceRecorder && state.voiceRecorder.state === "recording" ? 'recording' : '') + '" type="button" data-record-voice title="' + (state.voiceRecorder && state.voiceRecorder.state === "recording" ? 'Stop recording' : 'Record a voice message') + '">●</button><button class="btn btn-primary" type="submit">Send</button></form>'
+      : '';
+    panel = '<section class="message-panel"><header class="message-head"><button class="message-person" data-member-profile="' + esc(person.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + (active.accepted ? 'Private conversation' : 'Message request') + '</small></span></button><button class="btn icon-btn" data-profile-options="' + esc(person.id) + '" aria-label="Conversation safety options">•••</button></header>' + requestBanner + '<div class="message-thread" id="messageThread">' + (messages || '<div class="thread-start"><span>Start simple</span><p>Say hello and share what you are studying.</p></div>') + '</div>' + composer + '</section>';
+  }
+
+  appShell('<div class="messages-layout"><aside class="conversation-list"><div class="conversation-title"><div><span class="eyebrow">Private</span><h1>Messages</h1></div><button class="btn icon-btn" data-view="encouragements" title="Find students">＋</button></div><div class="conversation-scroll">' + (conversationRows || '<div class="empty conversation-empty">No conversations yet.</div>') + '</div></aside>' + panel + '</div>', "Messages");
+  requestAnimationFrame(function () {
+    const thread = document.querySelector("#messageThread");
+    if (thread) thread.scrollTop = thread.scrollHeight;
+  });
+}
+
 function renderProfile() {
   const p = state.profile;
-  appShell('<div class="page-head"><div><span class="eyebrow">Show up as yourself</span><h1>Your profile</h1><p>Only details allowed by your privacy settings can be seen by other members.</p></div></div><form class="card form" id="profileForm"><div class="field"><label>Display name</label><input name="display_name" minlength="2" maxlength="40" required value="' + esc(p.display_name) + '"></div><div class="field"><label>What are you studying?</label><input name="subject" maxlength="80" value="' + esc(p.subject) + '" placeholder="Biology, design, coding…"></div><div class="field"><label>Bio</label><textarea name="bio" maxlength="240" placeholder="A short introduction">' + esc(p.bio) + '</textarea></div><div class="field"><label>Country or region</label><input name="country" maxlength="60" value="' + esc(p.country) + '"></div><div class="field"><label>Profile color</label><input name="avatar_color" type="color" value="' + esc(p.avatar_color) + '"></div><button class="btn btn-primary">Save profile</button></form>', "Profile");
+  appShell('<div class="page-head"><div><span class="eyebrow">Your public identity</span><h1>Build your study profile</h1><p>This is what signed-in members see when they click your name or picture.</p></div><button class="btn" data-member-profile="' + esc(p.id) + '">Preview profile</button></div><div class="profile-editor"><aside class="card profile-photo-card"><div class="profile-photo-preview">' + avatarMarkup(p, "profile-avatar") + '</div><h3>Profile picture</h3><p>JPG, PNG, or WebP · up to 4 MB. Your picture is public. Sexual, explicit, or hateful images are not allowed.</p><label class="btn btn-primary" for="avatarUpload">' + (p.avatar_path ? 'Change picture' : 'Upload picture') + '</label><input id="avatarUpload" type="file" accept="image/jpeg,image/png,image/webp" hidden>' + (p.avatar_path ? '<button class="btn btn-sm" data-remove-avatar>Remove picture</button>' : '') + '<span class="safety-copy">Members can report unsafe profile images for review.</span></aside><form class="card form" id="profileForm"><div class="field"><label>Display name</label><input name="display_name" minlength="2" maxlength="40" required value="' + esc(p.display_name) + '"></div><div class="field"><label>What are you studying?</label><input name="subject" maxlength="80" value="' + esc(p.subject) + '" placeholder="Biology, design, coding…"></div><div class="field"><label>Bio</label><textarea name="bio" maxlength="240" placeholder="A short introduction">' + esc(p.bio) + '</textarea></div><div class="field"><label>Country or region</label><input name="country" maxlength="60" value="' + esc(p.country) + '"></div><div class="field"><label>Profile color</label><input name="avatar_color" type="color" value="' + esc(p.avatar_color) + '"></div><button class="btn btn-primary">Save profile</button></form></div>', "Profile");
 }
 
 function toggleRow(name, title, description, checked) {
@@ -315,13 +422,14 @@ function renderSettings() {
     toggleRow("show_profile", "Public member profile", "Allow signed-in members to see your name, bio, and subject.", p.show_profile) +
     toggleRow("show_country", "Show country", "Display your country or region on your profile.", p.show_country) +
     toggleRow("allow_invites", "Allow private-room invites", "Let other members invite you to private study calls.", p.allow_invites) +
+    toggleRow("accepting_dms", "Accept new messages", "Let signed-in members start a private conversation from your profile.", p.accepting_dms) +
     toggleRow("accepting_encouragements", "Receive encouragements", "Allow members to send you supportive messages.", p.accepting_encouragements) +
     '<button class="btn btn-primary">Save privacy settings</button></form><form class="card form advanced-settings" id="studyPreferencesForm"><div><span class="eyebrow">Session defaults</span><h3>Study preferences</h3><p>These choices are saved in this browser and prefill your room setup.</p></div><div class="settings-grid"><div class="field"><label>Default focus block</label><select name="defaultDuration"><option value="25"' + (prefs.defaultDuration === 25 ? ' selected' : '') + '>25 minutes</option><option value="50"' + (prefs.defaultDuration === 50 ? ' selected' : '') + '>50 minutes</option><option value="90"' + (prefs.defaultDuration === 90 ? ' selected' : '') + '>90 minutes</option></select></div><div class="field"><label>Quick-start room</label><select name="defaultRoom">' + roomOptions + '</select></div></div>' + toggleRow("defaultCamera", "Camera ready by default", "Keep camera selected when opening the device lobby. You still approve browser access.", prefs.defaultCamera) + toggleRow("defaultMicrophone", "Microphone ready by default", "Keep microphone selected in the device lobby. Public rooms should usually stay muted.", prefs.defaultMicrophone) + toggleRow("soundCues", "Timer sound cues", "Allow a short sound when a focus block finishes.", prefs.soundCues) + toggleRow("compactMode", "Compact dashboard", "Fit more study information on screen with tighter spacing.", prefs.compactMode) + '<button class="btn btn-primary">Save study preferences</button></form><section class="card" style="margin-top:18px"><h3>Account</h3><p>Signed in as ' + esc(state.user.email) + '</p><button class="btn btn-danger" data-signout>Sign out</button> <button class="btn" data-privacy>Read privacy summary</button></section>', "Privacy & settings");
 }
 
 function renderApp() {
   if (!state.session) return renderLanding();
-  const renderers = { home:renderHome, rooms:renderRooms, goals:renderGoals, encouragements:renderEncouragements, private:renderPrivate, plus:renderPlus, blog:renderBlog, profile:renderProfile, settings:renderSettings };
+  const renderers = { home:renderHome, rooms:renderRooms, goals:renderGoals, encouragements:renderEncouragements, messages:renderMessages, member:renderMemberProfile, private:renderPrivate, plus:renderPlus, blog:renderBlog, profile:renderProfile, settings:renderSettings };
   (renderers[state.view] || renderHome)();
 }
 
@@ -359,12 +467,15 @@ async function loadUserData() {
     supabase.from("focus_sessions").select("*").order("completed_at", { ascending:false }).limit(100),
     supabase.from("subscriptions").select("*").eq("user_id", userId).maybeSingle(),
     supabase.rpc("get_weekly_allowance"),
-    supabase.from("encouragements").select("*,sender:profiles!encouragements_sender_id_fkey(display_name,avatar_color)").eq("receiver_id", userId).order("created_at", { ascending:false }).limit(30),
-    supabase.from("profiles").select("id,display_name,subject,avatar_color").neq("id", userId).eq("show_profile", true).limit(12),
-    supabase.from("private_rooms").select("*").order("created_at", { ascending:false })
+    supabase.from("encouragements").select("*,sender:profiles!encouragements_sender_id_fkey(id,display_name,avatar_color,avatar_path)").eq("receiver_id", userId).order("created_at", { ascending:false }).limit(30),
+    supabase.rpc("list_member_profiles", { p_limit:24 }),
+    supabase.from("private_rooms").select("*").order("created_at", { ascending:false }),
+    supabase.rpc("list_dm_conversations")
   ]);
   if (results[0].error) showToast(results[0].error.message, true);
-  state.profile = results[0].data || { id:userId, display_name:state.user.email.split("@")[0], bio:"", country:"", subject:"", avatar_color:"#7c6cff", show_profile:true, show_country:false, allow_invites:true, accepting_encouragements:true };
+  if (results[6].error) showToast(results[6].error.message, true);
+  if (results[8].error) showToast(results[8].error.message, true);
+  state.profile = results[0].data || { id:userId, display_name:state.user.email.split("@")[0], bio:"", country:"", subject:"", avatar_color:"#7c6cff", avatar_path:null, show_profile:true, show_country:false, allow_invites:true, accepting_dms:true, accepting_encouragements:true };
   state.goals = results[1].data || [];
   state.sessions = results[2].data || [];
   state.subscription = results[3].data || null;
@@ -372,6 +483,7 @@ async function loadUserData() {
   state.encouragements = results[5].data || [];
   state.members = results[6].data || [];
   state.privateRooms = results[7].data || [];
+  state.conversations = results[8].data || [];
   await processInvite();
 }
 
@@ -391,6 +503,256 @@ async function processInvite() {
 async function loadPrivateRooms() {
   const result = await supabase.from("private_rooms").select("*").order("created_at", { ascending:false });
   state.privateRooms = result.data || [];
+}
+
+async function refreshMembers() {
+  const result = await supabase.rpc("list_member_profiles", { p_limit:24 });
+  if (result.error) return showToast(result.error.message, true);
+  state.members = result.data || [];
+}
+
+async function openMemberProfile(userId) {
+  if (!userId) return;
+  state.profileReturnView = state.view === "member" ? state.profileReturnView : state.view;
+  state.memberProfile = null;
+  state.view = "member";
+  renderMemberProfile();
+  const result = await supabase.rpc("get_member_profile", { p_member_id:userId });
+  if (result.error || !result.data || !result.data[0]) {
+    state.view = state.profileReturnView || "encouragements";
+    renderApp();
+    return showToast(result.error ? result.error.message : "This profile is unavailable.", true);
+  }
+  state.memberProfile = result.data[0];
+  renderMemberProfile();
+}
+
+async function togglePin(userId, shouldPin) {
+  const result = await supabase.rpc(shouldPin ? "pin_member" : "unpin_member", { p_member_id:userId });
+  if (result.error) return showToast(result.error.message, true);
+  const social = result.data && result.data[0];
+  if (state.memberProfile && state.memberProfile.id === userId && social) {
+    state.memberProfile.viewer_has_pinned = social.is_pinned;
+    state.memberProfile.pinned_by_count = social.pinned_by_count;
+    state.memberProfile.pins_count = social.pins_count;
+  }
+  await refreshMembers();
+  renderApp();
+  showToast(shouldPin ? "Profile pinned. You’re now following this student." : "Profile unpinned.");
+}
+
+async function loadConversations() {
+  const result = await supabase.rpc("list_dm_conversations");
+  if (result.error) return showToast(result.error.message, true);
+  state.conversations = result.data || [];
+}
+
+async function startConversation(userId) {
+  const result = await supabase.rpc("start_dm", { p_recipient_id:userId });
+  if (result.error) return showToast(result.error.message, true);
+  await loadConversations();
+  state.activeConversationId = result.data;
+  state.view = "messages";
+  await loadMessages(result.data);
+  renderMessages();
+}
+
+async function openConversation(conversationId) {
+  state.activeConversationId = conversationId;
+  state.view = "messages";
+  await loadMessages(conversationId);
+  renderMessages();
+}
+
+async function loadMessages(conversationId) {
+  if (!conversationId) { state.messages = []; state.messageMedia = {}; return; }
+  const result = await supabase.from("dm_messages").select("*").eq("conversation_id", conversationId).order("created_at", { ascending:true }).limit(300);
+  if (result.error) return showToast(result.error.message, true);
+  state.messages = result.data || [];
+  state.messageMedia = {};
+  const attachments = state.messages.filter(function (message) { return message.storage_path; });
+  await Promise.all(attachments.map(async function (message) {
+    const signed = await supabase.storage.from("dm-media").createSignedUrl(message.storage_path, 3600);
+    if (!signed.error && signed.data) state.messageMedia[message.id] = signed.data.signedUrl;
+  }));
+  subscribeToDm(conversationId);
+}
+
+function subscribeToDm(conversationId) {
+  if (state.dmChannel) supabase.removeChannel(state.dmChannel);
+  state.dmChannel = supabase.channel("focusroom-dm-" + conversationId)
+    .on("postgres_changes", { event:"INSERT", schema:"public", table:"dm_messages", filter:"conversation_id=eq." + conversationId }, async function () {
+      await loadMessages(conversationId);
+      await loadConversations();
+      if (state.view === "messages") renderMessages();
+    })
+    .subscribe();
+}
+
+async function acceptConversation(conversationId) {
+  const result = await supabase.rpc("accept_dm", { p_conversation_id:conversationId });
+  if (result.error) return showToast(result.error.message, true);
+  await loadConversations();
+  await loadMessages(conversationId);
+  renderMessages();
+  showToast("Message request accepted.");
+}
+
+async function submitDm(form) {
+  const active = activeConversation();
+  if (!active) return;
+  const data = new FormData(form);
+  const body = String(data.get("message") || "").trim();
+  if (!body) return;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  const result = await supabase.rpc("send_dm", {
+    p_conversation_id:active.id,
+    p_kind:"text",
+    p_body:body,
+    p_storage_path:null,
+    p_mime_type:null,
+    p_byte_size:null
+  });
+  button.disabled = false;
+  if (result.error) return showToast(result.error.message, true);
+  form.reset();
+  await loadMessages(active.id);
+  await loadConversations();
+  renderMessages();
+}
+
+async function uploadDmAttachment(blob, kind, mimeType) {
+  const active = activeConversation();
+  if (!active || !blob) return;
+  const type = mimeType || blob.type;
+  const allowed = kind === "image"
+    ? ["image/jpeg", "image/png", "image/webp"]
+    : ["audio/webm", "audio/mp4", "audio/mpeg", "audio/ogg"];
+  if (!allowed.includes(type)) return showToast("That file type is not supported.", true);
+  if (!blob.size || blob.size > 6291456) return showToast("Attachments must be under 6 MB.", true);
+  const extensions = { "image/jpeg":"jpg", "image/png":"png", "image/webp":"webp", "audio/webm":"webm", "audio/mp4":"m4a", "audio/mpeg":"mp3", "audio/ogg":"ogg" };
+  const path = active.id + "/" + state.user.id + "/" + crypto.randomUUID() + "." + extensions[type];
+  showToast(kind === "image" ? "Uploading photo…" : "Uploading voice message…");
+  const uploaded = await supabase.storage.from("dm-media").upload(path, blob, { contentType:type, upsert:false });
+  if (uploaded.error) return showToast(uploaded.error.message, true);
+  const sent = await supabase.rpc("send_dm", {
+    p_conversation_id:active.id,
+    p_kind:kind,
+    p_body:"",
+    p_storage_path:path,
+    p_mime_type:type,
+    p_byte_size:blob.size
+  });
+  if (sent.error) {
+    await supabase.storage.from("dm-media").remove([path]);
+    return showToast(sent.error.message, true);
+  }
+  await loadMessages(active.id);
+  await loadConversations();
+  renderMessages();
+  showToast(kind === "image" ? "Photo sent." : "Voice message sent.");
+}
+
+async function toggleVoiceRecording() {
+  if (state.voiceRecorder && state.voiceRecorder.state === "recording") {
+    state.voiceRecorder.stop();
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === "undefined") {
+    return showToast("Voice recording is not supported in this browser.", true);
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    const preferred = ["audio/webm", "audio/mp4", "audio/ogg"].find(function (type) { return MediaRecorder.isTypeSupported(type); }) || "";
+    const recorder = new MediaRecorder(stream, preferred ? { mimeType:preferred } : undefined);
+    state.voiceStream = stream;
+    state.voiceRecorder = recorder;
+    state.voiceChunks = [];
+    recorder.addEventListener("dataavailable", function (event) { if (event.data.size) state.voiceChunks.push(event.data); });
+    recorder.addEventListener("stop", async function () {
+      clearTimeout(state.voiceTimer);
+      const type = recorder.mimeType.split(";")[0] || preferred || "audio/webm";
+      const blob = new Blob(state.voiceChunks, { type:type });
+      stream.getTracks().forEach(function (track) { track.stop(); });
+      state.voiceRecorder = null;
+      state.voiceStream = null;
+      state.voiceChunks = [];
+      if (state.view === "messages") renderMessages();
+      await uploadDmAttachment(blob, "voice", type);
+    });
+    recorder.start();
+    state.voiceTimer = setTimeout(function () { if (recorder.state === "recording") recorder.stop(); }, 120000);
+    renderMessages();
+    showToast("Recording voice message. Tap the red button to stop.");
+  } catch (error) {
+    showToast(deviceErrorMessage(error), true);
+  }
+}
+
+async function uploadAvatar(file) {
+  if (!file) return;
+  const allowed = ["image/jpeg", "image/png", "image/webp"];
+  if (!allowed.includes(file.type)) return showToast("Choose a JPG, PNG, or WebP image.", true);
+  if (file.size > 4194304) return showToast("Profile pictures must be under 4 MB.", true);
+  const extensions = { "image/jpeg":"jpg", "image/png":"png", "image/webp":"webp" };
+  const path = state.user.id + "/" + crypto.randomUUID() + "." + extensions[file.type];
+  showToast("Uploading profile picture…");
+  const uploaded = await supabase.storage.from("profile-avatars").upload(path, file, { contentType:file.type, cacheControl:"3600", upsert:false });
+  if (uploaded.error) return showToast(uploaded.error.message, true);
+  const previous = state.profile.avatar_path;
+  const saved = await supabase.from("profiles").update({ avatar_path:path }).eq("id", state.user.id).select().single();
+  if (saved.error) {
+    await supabase.storage.from("profile-avatars").remove([path]);
+    return showToast(saved.error.message, true);
+  }
+  state.profile = saved.data;
+  if (previous) await supabase.storage.from("profile-avatars").remove([previous]);
+  renderProfile();
+  showToast("Profile picture updated.");
+}
+
+async function removeAvatar() {
+  const previous = state.profile.avatar_path;
+  if (!previous) return;
+  const saved = await supabase.from("profiles").update({ avatar_path:null }).eq("id", state.user.id).select().single();
+  if (saved.error) return showToast(saved.error.message, true);
+  state.profile = saved.data;
+  await supabase.storage.from("profile-avatars").remove([previous]);
+  renderProfile();
+  showToast("Profile picture removed.");
+}
+
+function showReportModal(userId, messageId) {
+  const context = messageId ? "message" : "profile";
+  showModal(messageId ? "Report message" : "Profile safety", '<form class="form" id="reportMemberForm"><input type="hidden" name="user_id" value="' + esc(userId) + '"><input type="hidden" name="message_id" value="' + esc(messageId || "") + '"><input type="hidden" name="context" value="' + context + '"><p>Reports are private. Add enough detail for the FocusRoom team to review the issue.</p><div class="field"><label>What happened?</label><textarea name="reason" minlength="3" maxlength="500" required placeholder="Describe the unsafe image, profile, or message"></textarea></div><button class="btn btn-primary">Send report</button></form><div class="modal-safety"><strong>Need distance now?</strong><p>Blocking hides this member’s profile and ends access to your conversation.</p><button class="btn btn-danger" data-block-member="' + esc(userId) + '">Block member</button></div>');
+}
+
+async function submitMemberReport(form) {
+  const data = new FormData(form);
+  const result = await supabase.rpc("report_member", {
+    p_user_id:data.get("user_id"),
+    p_reason:String(data.get("reason") || "").trim(),
+    p_context:data.get("context"),
+    p_message_id:data.get("message_id") || null
+  });
+  if (result.error) return showToast(result.error.message, true);
+  closeModal();
+  showToast("Report sent. Thank you for helping keep FocusRoom safe.");
+}
+
+async function blockMember(userId) {
+  const result = await supabase.rpc("block_member", { p_user_id:userId });
+  if (result.error) return showToast(result.error.message, true);
+  closeModal();
+  if (state.dmChannel) { await supabase.removeChannel(state.dmChannel); state.dmChannel = null; }
+  state.activeConversationId = null;
+  state.messages = [];
+  state.memberProfile = null;
+  await Promise.all([refreshMembers(), loadConversations()]);
+  state.view = "encouragements";
+  renderEncouragements();
+  showToast("Member blocked.");
 }
 
 async function handleAuthSubmit(form) {
@@ -681,7 +1043,7 @@ async function leaveMeeting() {
 }
 
 async function sendEncouragement(userId, kind) {
-  if (kind === "focus_boost" && state.allowance.plan !== "plus") { state.view = "plus"; renderPlus(); return showToast("Focus Boosts are included with Plus."); }
+  if (kind === "focus_boost" && !["plus", "premium", "buddy"].includes(state.allowance.plan)) { state.view = "plus"; renderPlus(); return showToast("Focus Boosts are included with Premium and Buddy."); }
   showModal(kind === "focus_boost" ? "Send a Focus Boost" : "Send encouragement", '<form id="encouragementForm" class="form"><input type="hidden" name="receiver" value="' + esc(userId) + '"><input type="hidden" name="kind" value="' + kind + '"><div class="field"><label>Supportive message</label><textarea name="message" maxlength="160" placeholder="You’re doing great — keep going!"></textarea></div><button class="btn btn-primary">Send</button></form>');
 }
 
@@ -718,7 +1080,7 @@ async function saveProfile(form, privacyOnly) {
   const data = new FormData(form);
   let update;
   if (privacyOnly) {
-    update = { show_profile:data.has("show_profile"), show_country:data.has("show_country"), allow_invites:data.has("allow_invites"), accepting_encouragements:data.has("accepting_encouragements") };
+    update = { show_profile:data.has("show_profile"), show_country:data.has("show_country"), allow_invites:data.has("allow_invites"), accepting_dms:data.has("accepting_dms"), accepting_encouragements:data.has("accepting_encouragements") };
   } else {
     update = { display_name:String(data.get("display_name")).trim(), subject:String(data.get("subject")).trim(), bio:String(data.get("bio")).trim(), country:String(data.get("country")).trim(), avatar_color:data.get("avatar_color") };
   }
@@ -805,6 +1167,18 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.openResend !== undefined) showModal("Resend verification", '<form id="resendForm" class="form"><div class="field"><label for="resendEmail">Account email</label><input id="resendEmail" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><button class="btn btn-primary">Send a fresh link</button></form>');
   if (target.dataset.resendEmail !== undefined) await resendVerification();
   if (target.dataset.view) { state.view = target.dataset.view; state.mobileNav = false; renderApp(); }
+  if (target.dataset.memberProfile) await openMemberProfile(target.dataset.memberProfile);
+  if (target.dataset.profileBack !== undefined) { state.view = state.profileReturnView || "encouragements"; state.memberProfile = null; renderApp(); }
+  if (target.dataset.pinMember) await togglePin(target.dataset.pinMember, true);
+  if (target.dataset.unpinMember) await togglePin(target.dataset.unpinMember, false);
+  if (target.dataset.messageMember) await startConversation(target.dataset.messageMember);
+  if (target.dataset.conversation) await openConversation(target.dataset.conversation);
+  if (target.dataset.acceptDm) await acceptConversation(target.dataset.acceptDm);
+  if (target.dataset.recordVoice !== undefined) await toggleVoiceRecording();
+  if (target.dataset.profileOptions) showReportModal(target.dataset.profileOptions, null);
+  if (target.dataset.reportMessage) showReportModal(target.dataset.reportUser, target.dataset.reportMessage);
+  if (target.dataset.blockMember) await blockMember(target.dataset.blockMember);
+  if (target.dataset.removeAvatar !== undefined) await removeAvatar();
   if (target.dataset.joinRoom) await joinPublicRoom(target.dataset.joinRoom);
   if (target.dataset.checkDevices !== undefined) await checkDevices();
   if (target.dataset.leaveMeeting !== undefined) await leaveMeeting();
@@ -829,6 +1203,8 @@ document.addEventListener("click", async function (event) {
 document.addEventListener("change", async function (event) {
   if (event.target.dataset.goalToggle) await toggleGoal(event.target.dataset.goalToggle, event.target.checked);
   if (event.target.dataset.mediaToggle) togglePreviewTrack(event.target.dataset.mediaToggle, event.target.checked);
+  if (event.target.id === "avatarUpload") { await uploadAvatar(event.target.files && event.target.files[0]); event.target.value = ""; }
+  if (event.target.id === "dmMediaInput") { await uploadDmAttachment(event.target.files && event.target.files[0], "image"); event.target.value = ""; }
 });
 
 document.addEventListener("submit", async function (event) {
@@ -863,13 +1239,20 @@ document.addEventListener("submit", async function (event) {
   }
   if (form.id === "goalForm") { const data = new FormData(form); await saveGoal(String(data.get("title")).trim()); }
   if (form.id === "encouragementForm") await submitEncouragement(form);
+  if (form.id === "dmForm") await submitDm(form);
+  if (form.id === "reportMemberForm") await submitMemberReport(form);
   if (form.id === "privateRoomForm") await createPrivateRoom(form);
   if (form.id === "profileForm") await saveProfile(form, false);
   if (form.id === "privacyForm") await saveProfile(form, true);
   if (form.id === "studyPreferencesForm") saveStudyPreferences(form);
 });
 
-window.addEventListener("beforeunload", function () { if (state.presenceChannel) state.presenceChannel.untrack(); stopAmbient(); });
+window.addEventListener("beforeunload", function () {
+  if (state.presenceChannel) state.presenceChannel.untrack();
+  if (state.dmChannel) supabase.removeChannel(state.dmChannel);
+  if (state.voiceStream) state.voiceStream.getTracks().forEach(function (track) { track.stop(); });
+  stopAmbient();
+});
 
 async function init() {
   document.documentElement.classList.toggle("compact-mode", state.preferences.compactMode);
@@ -883,7 +1266,10 @@ async function init() {
     setTimeout(async function () {
       state.session = session; state.user = session && session.user;
       if (session) { await loadUserData(); state.view = "home"; }
-      else { state.profile = null; state.view = "home"; }
+      else {
+        if (state.dmChannel) { await supabase.removeChannel(state.dmChannel); state.dmChannel = null; }
+        state.profile = null; state.memberProfile = null; state.conversations = []; state.messages = []; state.view = "home";
+      }
       renderApp();
     }, 0);
   });
