@@ -27,6 +27,12 @@ const state = {
   view: "home",
   activeRoom: null,
   jitsi: null,
+  previewStream: null,
+  previewAudioContext: null,
+  previewAnimation: null,
+  pendingRoom: null,
+  pendingPrivate: false,
+  joinDraft: { intention: "", duration: 50, camera: false, microphone: false },
   timerSeconds: 25 * 60,
   timerPreset: 25,
   timerRunning: false,
@@ -99,7 +105,12 @@ function showToast(message, error) {
   showToast.timeout = setTimeout(function () { toastEl.className = "toast"; }, 3600);
 }
 
-function closeModal() { modalRoot.innerHTML = ""; }
+function closeModal() {
+  stopDevicePreview();
+  state.pendingRoom = null;
+  state.pendingPrivate = false;
+  modalRoot.innerHTML = "";
+}
 
 function showModal(title, content, large) {
   modalRoot.innerHTML = '<div class="modal-backdrop" data-close-modal><div class="modal' + (large ? ' modal-lg' : '') + '" role="dialog" aria-modal="true"><div class="modal-head"><h2>' + esc(title) + '</h2><button class="btn icon-btn" data-close-modal aria-label="Close">×</button></div>' + content + '</div></div>';
@@ -130,7 +141,7 @@ function roomCards(publicMode) {
   if (!state.rooms.length) return '<div class="skeleton"></div><div class="skeleton"></div>';
   return state.rooms.map(function (room) {
     const count = state.roomCounts[room.slug] || 0;
-    return '<article class="card room-card"><div class="room-icon">' + esc(room.icon) + '</div><div><h3>' + esc(room.name) + '</h3><p>' + esc(room.description) + '</p><div class="live-dot"><span data-room-count="' + esc(room.slug) + '">' + count + '</span> studying now</div></div><button class="btn btn-sm ' + (publicMode ? '' : 'btn-primary') + '" data-join-room="' + esc(room.id) + '">' + (publicMode ? 'View room' : 'Join') + '</button></article>';
+    return '<article class="card room-card"><div class="room-icon">' + esc(room.icon) + '</div><div><div class="room-title-line"><h3>' + esc(room.name) + '</h3><span class="room-mode">' + (room.slug === "study-cafe" ? "Social breaks" : "Quiet focus") + '</span></div><p>' + esc(room.description) + '</p><div class="live-dot"><span data-room-count="' + esc(room.slug) + '">' + count + '</span> connected now</div></div><button class="btn btn-sm ' + (publicMode ? '' : 'btn-primary') + '" data-join-room="' + esc(room.id) + '">' + (publicMode ? 'Preview' : 'Set up & join') + '</button></article>';
   }).join("");
 }
 
@@ -156,10 +167,15 @@ function blogCards() {
 }
 
 function renderLanding() {
+  const totalOnline = Object.values(state.roomCounts).reduce(function(a,b){return a+b;},0);
+  const previewRooms = state.rooms.slice(0, 3).map(function (room, index) {
+    return '<div class="preview-room"><span class="room-icon">' + esc(room.icon) + '</span><div><strong>' + esc(room.name) + '</strong><small><span data-room-count="' + esc(room.slug) + '">' + (state.roomCounts[room.slug] || 0) + '</span> connected</small></div><span class="preview-status">' + (index === 0 ? '50/10' : index === 1 ? 'Open' : 'Exam') + '</span></div>';
+  }).join("");
   app.innerHTML = baseBackground() + '<div class="landing">' + publicHeader() +
-    '<main><section class="hero"><div class="hero-copy"><span class="eyebrow">A calmer place to get things done</span><h1><span class="gradient-text">Focus together.</span><br>Grow every day.</h1><p>Join real live study rooms, set a goal, and work alongside people who are showing up too. Camera and microphone always start off.</p><div class="hero-actions"><button class="btn btn-primary" data-auth="signup">Start studying free</button><a class="btn" href="#rooms">Explore live rooms</a></div><div class="trust-row"><span>Free public rooms</span><span>Real camera and audio controls</span><span>Privacy settings</span></div></div>' +
-    '<div class="hero-visual" aria-label="Cozy nighttime desk illustration"><div class="moon"></div><div class="desk-scene"></div><div class="scene-card"><span class="pulse"></span><div><strong>' + (Object.values(state.roomCounts).reduce(function(a,b){return a+b;},0)) + ' people focusing</strong><small>Live presence only — no made-up users</small></div></div></div></section>' +
+    '<main><section class="hero"><div class="hero-copy"><span class="eyebrow">Live focus rooms · free to join</span><h1><span class="gradient-text">Open a room.</span><br>Start the work.</h1><p>Choose what you are working on, test your camera and microphone, and focus beside other students in an always-open study space.</p><div class="hero-actions"><button class="btn btn-primary" data-auth="signup">Create a free account</button><a class="btn" href="#rooms">See the live rooms</a></div><div class="trust-row"><span>Device check before joining</span><span>Camera always optional</span><span>Real live counts</span></div></div>' +
+    '<div class="hero-visual product-preview" aria-label="FocusRoom product preview"><div class="preview-top"><div><span class="eyebrow">Live focus floor</span><h2>Choose your room</h2></div><span class="online-pill"><i></i>' + totalOnline + ' online</span></div><div class="preview-intention"><span>Today’s intention</span><strong>Finish one clear task</strong><div class="preview-progress"><i></i></div></div><div class="preview-room-list">' + (previewRooms || '<div class="skeleton"></div>') + '</div><div class="preview-footer"><span>25</span><span class="active">50</span><span>90 min</span><button class="btn btn-primary btn-sm" data-auth="signup">Start session</button></div></div></section>' +
     '<section class="section" id="rooms"><div class="section-head"><div><span class="eyebrow">Live rooms</span><h2>Find your focus atmosphere</h2></div><p>Every number is based on people actually connected to a room. Sign in to join with camera and microphone controls.</p></div><div class="room-grid">' + roomCards(true) + '</div></section>' +
+    '<section class="section session-steps"><div class="section-head"><div><span class="eyebrow">A real session, not another feed</span><h2>From intention to finished work</h2></div></div><div class="grid-3"><article class="card step-card"><span>01</span><h3>Name the task</h3><p>Write one concrete intention and choose a 25, 50, or 90 minute block.</p></article><article class="card step-card"><span>02</span><h3>Check your setup</h3><p>Preview video, confirm microphone activity, and choose the exact devices you want.</p></article><article class="card step-card"><span>03</span><h3>Focus with others</h3><p>Join muted or camera-off, use the timer, and save finished sessions to your history.</p></article></div></section>' +
     '<section class="section" id="features"><div class="section-head"><div><span class="eyebrow">Made for momentum</span><h2>More than a video call</h2></div></div><div class="bento"><article class="card feature-card"><div class="feature-icon">◷</div><div><h3>Focus timer and goals</h3><p>Choose 25 or 50 minutes, write the next task, and save completed sessions to your history.</p></div></article><article class="card feature-card"><div class="feature-icon">♡</div><div><h3>Real encouragement</h3><p>Send a thoughtful nudge to someone who is showing up. Free members receive 5 sends each week.</p></div></article><article class="card feature-card"><div class="feature-icon">☾</div><div><h3>Cozy ambience</h3><p>Use generated rain, café, or fireside sound without opening another distracting tab.</p></div></article></div></section>' +
     '<section class="section" id="pricing"><div class="section-head"><div><span class="eyebrow">FocusRoom Plus</span><h2>A more personal focus space</h2></div><p>All public rooms and essential focus tools stay free. Plus is for students who want private calls and extra ways to connect.</p></div><div class="pricing-grid">' + pricingCards() + '</div></section>' +
     '<section class="section" id="journal"><div class="section-head"><div><span class="eyebrow">Focus journal</span><h2>Small ideas that help</h2></div></div><div class="grid-3">' + blogCards() + '</div></section></main>' +
@@ -209,13 +225,16 @@ function streakDays() {
 }
 
 function renderHome() {
-  const prompt = prompts[Math.floor(Date.now() / 86400000) % prompts.length];
   const complete = state.goals.filter(function (g) { return g.complete; }).length;
   const progress = state.goals.length ? Math.round(complete / state.goals.length * 100) : 0;
-  const content = '<div class="page-head"><div><span class="eyebrow">Welcome back</span><h1>Ready for a good session?</h1><p>Set one clear intention, then choose the room that fits your energy.</p></div><button class="btn btn-primary" data-view="rooms">Find a live room</button></div>' +
-    '<div class="stat-grid"><div class="card stat"><span class="label">Focus time</span><div class="value">' + fmtMinutes(completedMinutes()) + '</div></div><div class="card stat"><span class="label">Sessions</span><div class="value">' + state.sessions.length + '</div></div><div class="card stat"><span class="label">Current streak</span><div class="value">' + streakDays() + ' days</div></div><div class="card stat"><span class="label">Weekly sends</span><div class="value">' + state.allowance.encouragements_remaining + ' left</div></div></div>' +
-    '<div class="dashboard-grid"><div class="stack"><article class="card daily-card"><span class="eyebrow">Today’s focus prompt</span><blockquote>“' + esc(prompt) + '”</blockquote><button class="btn" data-view="goals">Turn it into a goal</button></article><section class="card"><div class="section-head"><div><h3>Your goals</h3><p>' + complete + ' of ' + state.goals.length + ' completed</p></div><strong>' + progress + '%</strong></div><div class="progress"><span style="width:' + progress + '%"></span></div><div style="height:16px"></div>' + goalsList(4) + '</section></div>' + timerCard() + '</div>';
-  appShell(content, "Home");
+  const leadRoom = state.rooms[0];
+  const roomStrip = state.rooms.slice(0, 3).map(function (room) {
+    return '<button class="focus-floor-room" data-join-room="' + esc(room.id) + '"><span class="room-icon">' + esc(room.icon) + '</span><span><strong>' + esc(room.name) + '</strong><small><i></i><b data-room-count="' + esc(room.slug) + '">' + (state.roomCounts[room.slug] || 0) + '</b> connected</small></span><span class="room-arrow">→</span></button>';
+  }).join("");
+  const content = '<div class="workspace-head"><div><span class="eyebrow">Your study desk</span><h1>What are you finishing today?</h1></div><div class="date-chip">' + new Date().toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) + '</div></div>' +
+    '<section class="card start-session-card"><div class="session-copy"><span class="eyebrow">Start a focus block</span><h2>Set one target. Join when ready.</h2><p>Your intention appears only in this setup and helps you start with a clear finish line.</p></div><form id="quickSessionForm" class="quick-session"><div class="field"><label for="quickIntention">Session intention</label><input id="quickIntention" name="intention" maxlength="100" required placeholder="e.g. Finish chapter 4 notes"></div><div class="field duration-field"><label for="quickDuration">Time</label><select id="quickDuration" name="duration"><option value="25">25 min</option><option value="50" selected>50 min</option><option value="90">90 min</option></select></div><button class="btn btn-primary"' + (leadRoom ? '' : ' disabled') + '>Choose a room</button></form></section>' +
+    '<div class="dashboard-layout"><div class="stack"><section class="card focus-floor"><div class="card-title-row"><div><span class="eyebrow">Live focus floor</span><h3>Open rooms</h3></div><button class="btn btn-sm" data-view="rooms">View all</button></div><div class="focus-floor-list">' + (roomStrip || '<div class="empty">Rooms are loading.</div>') + '</div></section><section class="card"><div class="card-title-row"><div><span class="eyebrow">Your plan</span><h3>Today’s goals</h3></div><strong>' + complete + '/' + state.goals.length + '</strong></div><div class="progress"><span style="width:' + progress + '%"></span></div><div style="height:16px"></div>' + goalsList(4) + '<button class="btn btn-sm goals-link" data-view="goals">Manage goals</button></section></div><div class="stack">' + timerCard() + '<section class="card activity-card"><span class="eyebrow">Your momentum</span><div class="mini-stats"><div><strong>' + fmtMinutes(completedMinutes()) + '</strong><span>focused</span></div><div><strong>' + state.sessions.length + '</strong><span>sessions</span></div><div><strong>' + streakDays() + '</strong><span>day streak</span></div></div></section></div></div>';
+  appShell(content, "Today");
 }
 
 function timerCard() {
@@ -223,7 +242,8 @@ function timerCard() {
 }
 
 function renderRooms() {
-  appShell('<div class="page-head"><div><span class="eyebrow">24/7 public spaces</span><h1>Study rooms</h1><p>Camera and microphone begin off. You control when they are enabled.</p></div></div><div class="room-grid">' + roomCards(false) + '</div><div class="card" style="margin-top:18px"><strong>Respect the room</strong><p style="margin-bottom:0">No recording, harassment, or disruptive audio. Leave immediately if anything feels unsafe. FocusRoom does not store your call video or audio.</p></div>', "Study rooms");
+  const online = Object.values(state.roomCounts).reduce(function (sum, count) { return sum + count; }, 0);
+  appShell('<div class="page-head"><div><span class="eyebrow">Live focus floor</span><h1>Pick your room</h1><p>Choose an atmosphere, set your task, and check your devices before entering.</p></div><span class="online-pill"><i></i>' + online + ' connected</span></div><div class="room-grid">' + roomCards(false) + '</div><div class="room-info-grid"><section class="card"><span class="eyebrow">Before you enter</span><h3>You control what others see and hear</h3><p>The setup screen shows your local preview first. Camera is optional, and you can join muted.</p></section><section class="card"><span class="eyebrow">Community standard</span><h3>Keep the room useful</h3><p>No recording, harassment, disruptive audio, or sharing private information. Leave if anything feels unsafe.</p></section><section class="card"><span class="eyebrow">Your data</span><h3>Calls are not stored here</h3><p>FocusRoom tracks room presence only after connection. It does not record your Jitsi video or audio.</p></section></div>', "Study rooms");
 }
 
 function goalsList(limit) {
@@ -438,8 +458,111 @@ async function joinPublicRoom(roomId) {
   if (!state.session) { state.authMode = "signup"; return renderAuth(); }
   const room = state.rooms.find(function (item) { return item.id === roomId; });
   if (!room) return;
-  state.activeRoom = room;
-  await mountMeeting(room, false);
+  showJoinLobby(room, false);
+}
+
+function deviceErrorMessage(error) {
+  if (!window.isSecureContext) return "Camera and microphone need a secure HTTPS page.";
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return "This browser does not support camera and microphone access.";
+  if (error && (error.name === "NotAllowedError" || error.name === "SecurityError")) return "Permission was blocked. Allow camera and microphone for this site in your browser settings, then try again.";
+  if (error && (error.name === "NotFoundError" || error.name === "DevicesNotFoundError")) return "No camera or microphone was found. Connect a device and try again.";
+  if (error && (error.name === "NotReadableError" || error.name === "TrackStartError")) return "A device is busy in another app. Close other video apps and try again.";
+  return "The device check could not start. Check browser permissions and try again.";
+}
+
+function showJoinLobby(room, isPrivate) {
+  state.pendingRoom = room;
+  state.pendingPrivate = Boolean(isPrivate);
+  const draft = state.joinDraft;
+  showModal("Set up your session", '<form id="joinLobbyForm" class="join-lobby"><div class="lobby-grid"><div class="device-panel"><div class="video-preview-wrap"><video id="devicePreview" autoplay muted playsinline></video><div class="video-placeholder" id="videoPlaceholder"><span>◉</span><strong>Preview is off</strong><small>Nothing is shared until you join</small></div><div class="mic-meter" aria-label="Microphone level"><i id="micLevel"></i></div></div><button class="btn device-check-btn" type="button" data-check-devices>Test camera & microphone</button><p class="device-status" id="deviceStatus">You can also join with both off.</p></div><div class="lobby-options"><span class="eyebrow">' + (isPrivate ? 'Private room' : 'Public focus room') + '</span><h3>' + esc(room.name || room.title) + '</h3><p>' + esc(room.description || (room.call_mode === "audio" ? "Invite-only audio study call." : "Invite-only video study call.")) + '</p><div class="field"><label for="sessionIntention">What will you finish?</label><input id="sessionIntention" name="intention" maxlength="100" value="' + esc(draft.intention) + '" placeholder="One clear task"></div><div class="field"><label for="sessionDuration">Focus block</label><select id="sessionDuration" name="duration"><option value="25"' + (draft.duration === 25 ? ' selected' : '') + '>25 minutes</option><option value="50"' + (draft.duration === 50 ? ' selected' : '') + '>50 minutes</option><option value="90"' + (draft.duration === 90 ? ' selected' : '') + '>90 minutes</option></select></div><div class="device-switches"><label><input type="checkbox" name="camera" data-media-toggle="camera"' + (draft.camera ? ' checked' : '') + '><span>Camera</span><small id="cameraState">' + (draft.camera ? 'On' : 'Off') + '</small></label><label><input type="checkbox" name="microphone" data-media-toggle="microphone"' + (draft.microphone ? ' checked' : '') + '><span>Microphone</span><small id="microphoneState">' + (draft.microphone ? 'On' : 'Off') + '</small></label></div><div class="device-selects" id="deviceSelects"><div class="field"><label>Camera</label><select name="cameraDevice" disabled><option>Run device test first</option></select></div><div class="field"><label>Microphone</label><select name="microphoneDevice" disabled><option>Run device test first</option></select></div></div></div></div><div class="lobby-footer"><p><strong>Privacy:</strong> your preview stays on this device. FocusRoom does not record calls.</p><div><button type="button" class="btn" data-close-modal>Cancel</button> <button class="btn btn-primary" type="submit">Join room →</button></div></div></form>', true);
+}
+
+async function populateDeviceSelectors() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cameraSelect = document.querySelector('[name="cameraDevice"]');
+  const micSelect = document.querySelector('[name="microphoneDevice"]');
+  if (!cameraSelect || !micSelect) return;
+  const cameras = devices.filter(function (device) { return device.kind === "videoinput"; });
+  const microphones = devices.filter(function (device) { return device.kind === "audioinput"; });
+  cameraSelect.innerHTML = cameras.map(function (device, index) { return '<option value="' + esc(device.deviceId) + '">' + esc(device.label || "Camera " + (index + 1)) + '</option>'; }).join("") || '<option value="">No camera found</option>';
+  micSelect.innerHTML = microphones.map(function (device, index) { return '<option value="' + esc(device.deviceId) + '">' + esc(device.label || "Microphone " + (index + 1)) + '</option>'; }).join("") || '<option value="">No microphone found</option>';
+  cameraSelect.disabled = !cameras.length;
+  micSelect.disabled = !microphones.length;
+  if (state.joinDraft.cameraId) cameraSelect.value = state.joinDraft.cameraId;
+  if (state.joinDraft.microphoneId) micSelect.value = state.joinDraft.microphoneId;
+}
+
+function startMicMeter(stream) {
+  const audioTrack = stream.getAudioTracks()[0];
+  if (!audioTrack) return;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return;
+  state.previewAudioContext = new AudioCtx();
+  const source = state.previewAudioContext.createMediaStreamSource(new MediaStream([audioTrack]));
+  const analyser = state.previewAudioContext.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  const draw = function () {
+    analyser.getByteFrequencyData(data);
+    const average = data.reduce(function (sum, value) { return sum + value; }, 0) / data.length;
+    const level = document.querySelector("#micLevel");
+    if (level) level.style.width = Math.max(4, Math.min(100, average * 1.45)) + "%";
+    state.previewAnimation = requestAnimationFrame(draw);
+  };
+  draw();
+}
+
+function stopDevicePreview() {
+  if (state.previewAnimation) cancelAnimationFrame(state.previewAnimation);
+  state.previewAnimation = null;
+  if (state.previewStream) state.previewStream.getTracks().forEach(function (track) { track.stop(); });
+  state.previewStream = null;
+  if (state.previewAudioContext) state.previewAudioContext.close().catch(function () {});
+  state.previewAudioContext = null;
+}
+
+async function checkDevices() {
+  const status = document.querySelector("#deviceStatus");
+  const button = document.querySelector("[data-check-devices]");
+  if (status) status.textContent = "Requesting browser permission…";
+  if (button) button.disabled = true;
+  stopDevicePreview();
+  try {
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new DOMException("Media unavailable", "SecurityError");
+    const stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
+    state.previewStream = stream;
+    const video = document.querySelector("#devicePreview");
+    if (video) { video.srcObject = stream; await video.play().catch(function () {}); }
+    document.querySelector("#videoPlaceholder")?.classList.add("hidden");
+    state.joinDraft.camera = Boolean(stream.getVideoTracks().length);
+    state.joinDraft.microphone = Boolean(stream.getAudioTracks().length);
+    const cameraToggle = document.querySelector('[name="camera"]');
+    const micToggle = document.querySelector('[name="microphone"]');
+    if (cameraToggle) cameraToggle.checked = state.joinDraft.camera;
+    if (micToggle) micToggle.checked = state.joinDraft.microphone;
+    const cameraState = document.querySelector("#cameraState");
+    const microphoneState = document.querySelector("#microphoneState");
+    if (cameraState) cameraState.textContent = state.joinDraft.camera ? "On" : "Unavailable";
+    if (microphoneState) microphoneState.textContent = state.joinDraft.microphone ? "On" : "Unavailable";
+    await populateDeviceSelectors();
+    startMicMeter(stream);
+    if (status) { status.textContent = "Devices are working. Choose what to keep on when you enter."; status.classList.remove("error"); }
+    if (button) button.textContent = "Test again";
+  } catch (error) {
+    if (status) { status.textContent = deviceErrorMessage(error); status.classList.add("error"); }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function togglePreviewTrack(kind, enabled) {
+  state.joinDraft[kind] = enabled;
+  const tracks = state.previewStream ? (kind === "camera" ? state.previewStream.getVideoTracks() : state.previewStream.getAudioTracks()) : [];
+  tracks.forEach(function (track) { track.enabled = enabled; });
+  const label = document.querySelector(kind === "camera" ? "#cameraState" : "#microphoneState");
+  if (label) label.textContent = enabled ? (tracks.length ? "On" : "Enable in call") : "Off";
+  if (kind === "camera") document.querySelector("#videoPlaceholder")?.classList.toggle("hidden", enabled && tracks.length > 0);
 }
 
 async function ensureJitsi() {
@@ -456,11 +579,15 @@ async function ensureJitsi() {
   });
 }
 
-async function mountMeeting(room, isPrivate) {
-  app.insertAdjacentHTML("beforeend", '<section class="meeting-page"><header class="meeting-head"><button class="btn btn-sm" data-leave-meeting>← Leave</button><h3>' + esc(room.name || room.title) + '</h3><span class="meeting-status" id="meetingStatus">Preparing secure controls…</span></header><div id="jitsiMount"></div></section>');
+async function mountMeeting(room, isPrivate, joinOptions) {
+  const options = joinOptions || state.joinDraft;
+  state.activeRoom = room;
+  state.timerPreset = Number(options.duration || 50);
+  state.timerSeconds = state.timerPreset * 60;
+  const directUrl = "https://meet.jit.si/" + encodeURIComponent(room.jitsi_room);
+  app.insertAdjacentHTML("beforeend", '<section class="meeting-page"><header class="meeting-head"><button class="btn btn-sm" data-leave-meeting>← Leave</button><div class="meeting-context"><h3>' + esc(room.name || room.title) + '</h3><span>' + esc(options.intention || "Focus session") + ' · ' + state.timerPreset + ' min</span></div><span class="meeting-status" id="meetingStatus">Opening room…</span><a class="btn btn-sm" href="' + directUrl + '" target="_blank" rel="noopener noreferrer">Open separately ↗</a></header><div id="jitsiMount"></div></section>');
   const ready = await ensureJitsi();
   if (!ready) {
-    const directUrl = "https://meet.jit.si/" + encodeURIComponent(room.jitsi_room);
     document.querySelector("#jitsiMount").innerHTML = '<div class="meeting-error"><h2>Open the room directly</h2><p>Your browser blocked the embedded call. The same live camera room can still open securely in Jitsi.</p><a class="btn btn-primary" href="' + directUrl + '" target="_blank" rel="noopener noreferrer">Open camera room</a><p class="form-note">Camera and microphone permissions are controlled by your browser.</p></div>'; return;
   }
   try {
@@ -471,21 +598,25 @@ async function mountMeeting(room, isPrivate) {
       height: "100%",
       userInfo: { displayName:state.profile.display_name, email:state.user.email },
       configOverwrite: {
-        prejoinPageEnabled: true,
-        startWithAudioMuted: true,
-        startWithVideoMuted: true,
+        prejoinPageEnabled: false,
+        startWithAudioMuted: !options.microphone,
+        startWithVideoMuted: !options.camera,
         disableDeepLinking: true,
-        enableWelcomePage: false
+        enableWelcomePage: false,
+        useHostPageLocalStorage: true
       },
       interfaceConfigOverwrite: { MOBILE_APP_PROMO:false, SHOW_JITSI_WATERMARK:false }
     });
     state.jitsi.addListener("videoConferenceJoined", function () {
-      const status = document.querySelector("#meetingStatus"); if (status) status.textContent = "Connected · media is controlled inside the call";
+      const status = document.querySelector("#meetingStatus"); if (status) status.textContent = "Connected";
+      if (options.cameraDeviceId) state.jitsi.executeCommand("setVideoInputDevice", "Selected camera", options.cameraDeviceId);
+      if (options.microphoneDeviceId) state.jitsi.executeCommand("setAudioInputDevice", "Selected microphone", options.microphoneDeviceId);
       trackPresence(room, isPrivate);
     });
+    state.jitsi.addListener("videoConferenceLeft", leaveMeeting);
     state.jitsi.addListener("readyToClose", leaveMeeting);
-    state.jitsi.addListener("cameraError", function () { showToast("Camera access failed. Check your browser permission and device settings.", true); });
-    state.jitsi.addListener("micError", function () { showToast("Microphone access failed. Check your browser permission and device settings.", true); });
+    state.jitsi.addListener("cameraError", function () { showToast("Jitsi could not open the camera. Check the site permission or use Open separately.", true); });
+    state.jitsi.addListener("micError", function () { showToast("Jitsi could not open the microphone. Check the site permission or use Open separately.", true); });
   } catch (error) {
     document.querySelector("#jitsiMount").innerHTML = '<div class="meeting-error"><h2>Could not start the call</h2><p>' + esc(error.message) + '</p></div>';
   }
@@ -532,7 +663,7 @@ async function createPrivateRoom(form) {
 
 async function joinPrivateRoom(id) {
   const room = state.privateRooms.find(function (r) { return r.id === id; });
-  if (room) await mountMeeting(room, true);
+  if (room) showJoinLobby(room, true);
 }
 
 async function copyInvite(token) {
@@ -611,6 +742,7 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.authTab) { state.authMode = target.dataset.authTab; renderAuth(); }
   if (target.dataset.view) { state.view = target.dataset.view; state.mobileNav = false; renderApp(); }
   if (target.dataset.joinRoom) await joinPublicRoom(target.dataset.joinRoom);
+  if (target.dataset.checkDevices !== undefined) await checkDevices();
   if (target.dataset.leaveMeeting !== undefined) await leaveMeeting();
   if (target.dataset.goalDelete) await deleteGoal(target.dataset.goalDelete);
   if (target.dataset.timerPreset) setTimerPreset(Number(target.dataset.timerPreset));
@@ -632,12 +764,37 @@ document.addEventListener("click", async function (event) {
 
 document.addEventListener("change", async function (event) {
   if (event.target.dataset.goalToggle) await toggleGoal(event.target.dataset.goalToggle, event.target.checked);
+  if (event.target.dataset.mediaToggle) togglePreviewTrack(event.target.dataset.mediaToggle, event.target.checked);
 });
 
 document.addEventListener("submit", async function (event) {
   event.preventDefault();
   const form = event.target;
   if (form.id === "authForm") await handleAuthSubmit(form);
+  if (form.id === "quickSessionForm") {
+    const data = new FormData(form);
+    state.joinDraft.intention = String(data.get("intention") || "").trim();
+    state.joinDraft.duration = Number(data.get("duration") || 50);
+    if (state.rooms[0]) showJoinLobby(state.rooms[0], false);
+  }
+  if (form.id === "joinLobbyForm") {
+    const data = new FormData(form);
+    const room = state.pendingRoom;
+    const isPrivate = state.pendingPrivate;
+    state.joinDraft = {
+      intention:String(data.get("intention") || "").trim(),
+      duration:Number(data.get("duration") || 50),
+      camera:data.has("camera"),
+      microphone:data.has("microphone"),
+      cameraDeviceId:String(data.get("cameraDevice") || ""),
+      microphoneDeviceId:String(data.get("microphoneDevice") || "")
+    };
+    stopDevicePreview();
+    modalRoot.innerHTML = "";
+    state.pendingRoom = null;
+    state.pendingPrivate = false;
+    if (room) await mountMeeting(room, isPrivate, state.joinDraft);
+  }
   if (form.id === "goalForm") { const data = new FormData(form); await saveGoal(String(data.get("title")).trim()); }
   if (form.id === "encouragementForm") await submitEncouragement(form);
   if (form.id === "privateRoomForm") await createPrivateRoom(form);
