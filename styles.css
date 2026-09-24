@@ -197,6 +197,10 @@ h1, h2, h3 { line-height: 1.08; letter-spacing: -.035em; }
 .annual-note { min-height:49px; margin:-2px 0 7px; padding:9px 11px; border-radius:12px; background:rgba(101,223,177,.08); color:var(--muted); font-size:11px; }
 .annual-note strong { display:block; color:var(--mint); font-size:13px; }
 .annual-button { margin-top:8px !important; }
+.plan-fine-print { max-width:860px; margin:18px auto 0; text-align:center; font-size:12px; }
+.social-model-card { margin-top:24px; background:linear-gradient(135deg,rgba(112,93,232,.13),var(--panel)); }
+.social-model-card h3 { margin:7px 0 8px; }
+.social-model-card p { margin-bottom:0; }
 
 .blog-card { min-height:260px; display:flex; flex-direction:column; cursor:pointer; transition:.22s ease; }
 .blog-card:hover { transform:translateY(-5px); border-color:rgba(141,124,255,.38); }
