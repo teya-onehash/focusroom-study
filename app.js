@@ -302,7 +302,7 @@ function renderGoals() {
 
 function renderEncouragements() {
   const inbox = state.encouragements.map(function (item) {
-    const sender = item.sender || {};
+    const sender = item.sender || { id:item.sender_id, display_name:item.sender_display_name, avatar_color:item.sender_avatar_color, avatar_path:item.sender_avatar_path };
     return '<div class="inbox-item"><button class="avatar-button" data-member-profile="' + esc(item.sender_id) + '" aria-label="Open ' + esc(sender.display_name || "member") + ' profile">' + avatarMarkup(sender) + '</button><div><button class="profile-name" data-member-profile="' + esc(item.sender_id) + '">' + esc(sender.display_name || "FocusRoom member") + '</button> sent ' + (item.kind === "focus_boost" ? '<span class="plus-badge">✦ FOCUS BOOST</span>' : 'an encouragement') + '<p>' + esc(item.message || "Keep going — you’ve got this.") + '</p><span class="meta">' + new Date(item.created_at).toLocaleString() + '</span></div></div>';
   }).join("");
   const members = state.members.map(function (member) {
@@ -343,7 +343,7 @@ function renderMemberProfile() {
     ? '<button class="btn" data-message-member="' + esc(p.id) + '">Message</button>'
     : '<button class="btn" disabled title="This member has paused new messages">Messages paused</button>');
   const safetyButton = p.is_self ? '' : '<button class="btn icon-btn" data-profile-options="' + esc(p.id) + '" aria-label="Profile safety options">•••</button>';
-  appShell('<button class="back-link" data-profile-back>← Back</button><section class="card public-profile"><div class="profile-cover"><span></span><span></span></div><div class="profile-main"><div class="profile-identity">' + avatarMarkup(p, "profile-avatar") + '<div><span class="eyebrow">FocusRoom profile</span><h1>' + esc(p.display_name) + '</h1><p>' + esc(p.subject || "Working toward a goal") + (p.country ? ' · ' + esc(p.country) : '') + '</p></div></div><div class="profile-actions">' + pinButton + messageButton + safetyButton + '</div></div><div class="profile-stats"><div><strong>' + Number(p.pinned_by_count || 0) + '</strong><span>Pinned by</span></div><div><strong>' + Number(p.pins_count || 0) + '</strong><span>Profiles pinned</span></div><div><strong>' + (joined || 'New') + '</strong><span>Joined</span></div></div><div class="profile-about"><span class="eyebrow">About</span><p>' + esc(p.bio || "This student has not added a bio yet.") + '</p></div></section><section class="profile-note"><span>Pin = follow</span><p>Pinning follows this study profile and adds one to their pinned count. You can unpin at any time.</p></section>', esc(p.display_name));
+  appShell('<button class="back-link" data-profile-back>← Back</button><section class="card public-profile"><div class="profile-cover"><span></span><span></span></div><div class="profile-main"><div class="profile-identity">' + avatarMarkup(p, "profile-avatar") + '<div><span class="eyebrow">FocusRoom profile</span><h1>' + esc(p.display_name) + '</h1><p>' + esc(p.subject || "Working toward a goal") + (p.country ? ' · ' + esc(p.country) : '') + '</p></div></div><div class="profile-actions">' + pinButton + messageButton + safetyButton + '</div></div><div class="profile-stats"><div><strong>' + Number(p.pinned_by_count || 0) + '</strong><span>Pinned by</span></div><div><strong>' + Number(p.pins_count || 0) + '</strong><span>Profiles pinned</span></div><div><strong>' + (joined || 'New') + '</strong><span>Joined</span></div></div><div class="profile-about"><span class="eyebrow">About</span><p>' + esc(p.bio || "This student has not added a bio yet.") + '</p></div></section><section class="profile-note"><span>Pin = follow</span><p>Pinning follows this study profile and adds one to their pinned count. You can unpin at any time.</p></section>', p.display_name);
 }
 
 function activeConversation() {
@@ -467,7 +467,7 @@ async function loadUserData() {
     supabase.from("focus_sessions").select("*").order("completed_at", { ascending:false }).limit(100),
     supabase.from("subscriptions").select("*").eq("user_id", userId).maybeSingle(),
     supabase.rpc("get_weekly_allowance"),
-    supabase.from("encouragements").select("*,sender:profiles!encouragements_sender_id_fkey(id,display_name,avatar_color,avatar_path)").eq("receiver_id", userId).order("created_at", { ascending:false }).limit(30),
+    supabase.rpc("list_received_encouragements", { p_limit:30 }),
     supabase.rpc("list_member_profiles", { p_limit:24 }),
     supabase.from("private_rooms").select("*").order("created_at", { ascending:false }),
     supabase.rpc("list_dm_conversations")
