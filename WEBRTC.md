@@ -33,3 +33,11 @@ Never put a permanent TURN shared secret, Supabase service-role key, or provider
 - Direct calls: `dm-call:<call-id>`
 
 Realtime Authorization policies on `realtime.messages` validate the authenticated user against the public-room visit, private-room membership, or DM-call participants before allowing Broadcast or Presence access.
+
+## Public room scale
+
+Public study rooms have no application-level participant cap. Realtime Presence keeps the full authenticated room roster and connected count, including when more people are present than can safely share media in a browser mesh.
+
+To prevent upload bandwidth and peer-connection count from growing quadratically, clients are placed deterministically into WebRTC stream circles of up to six people. This is a media topology boundary, not a room-entry limit: everyone can join, everyone appears in the People list, and each student sees a stable live circle. Duplicate tabs are collapsed to one account in the roster.
+
+If the product later needs every participant to receive the same large-stage video mix, replace the peer mesh with an SFU. Supabase Realtime can continue to provide authorized Presence and application events, but an SFU should own large-room media forwarding.

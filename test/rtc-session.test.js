@@ -151,3 +151,37 @@ test("elects one tab per account and keeps stream pods symmetric", async () => {
   await session.handleSignal({ kind:"ready", from:"c-tab", to:"b-tab" });
   assert.equal(session.peers.size, 0);
 });
+
+test("keeps the complete public-room roster while limiting only the media circle", async () => {
+  const { supabase, channels } = setup();
+  const participantUpdates = [];
+  const session = new RealtimeWebRTCSession({
+    supabase,
+    topic:"study-room:public:open-room",
+    clientId:"a",
+    localStream:new FakeMediaStream(),
+    presence:{ user_id:"user-a" },
+    maxPeers:2,
+    onParticipants:(value) => participantUpdates.push(value)
+  });
+  await session.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  channels[0]._presence = {
+    b:[{ client_id:"b", user_id:"user-b" }],
+    c:[{ client_id:"c", user_id:"user-c" }],
+    d:[{ client_id:"d", user_id:"user-d" }],
+    e:[{ client_id:"e", user_id:"user-e" }]
+  };
+  channels[0].emit("presence", "sync");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const roster = participantUpdates.at(-1);
+  assert.equal(roster.length, 4);
+  assert.deepEqual(roster.map((person) => [person.user_id, person.stream_slot]), [
+    ["user-b", true],
+    ["user-c", true],
+    ["user-d", false],
+    ["user-e", false]
+  ]);
+  assert.equal(session.peers.size, 2);
+});

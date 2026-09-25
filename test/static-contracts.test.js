@@ -32,3 +32,9 @@ test("all production assets use one cache version", () => {
   assert.ok(versions.length >= 2);
   assert.equal(new Set(versions.concat(imports)).size, 1);
 });
+
+test("public rooms communicate open entry without confusing rhythm labels", () => {
+  assert.match(app, /PUBLIC_STREAM_CIRCLE_SIZE = 6/);
+  assert.match(app, /No join limit/i);
+  assert.doesNotMatch(app, /preview-status[^\n]*50\/10/);
+});
