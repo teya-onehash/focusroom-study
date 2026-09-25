@@ -1,0 +1,8 @@
+{
+  "name": "mellow-commons",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
