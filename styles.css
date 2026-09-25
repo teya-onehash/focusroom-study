@@ -869,6 +869,15 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
 .daily-time { color:var(--muted); font-size:12px; padding-left:16px; border-left:1px solid var(--line); white-space:nowrap; }
 .unlock-button { padding:9px 16px; border:2px solid transparent; border-radius:999px; background:linear-gradient(var(--panel-solid),var(--panel-solid)) padding-box,linear-gradient(100deg,#65dfb1,#8d7cff,#ff7aa8) border-box; cursor:pointer; font-weight:850; }
 .top-icon { border-radius:50%; font-size:19px; }
+.chat-launch { position:relative; width:44px; height:44px; display:grid; place-items:center; padding:0; border:2px solid transparent; border-radius:15px; color:var(--text); background:linear-gradient(var(--panel-solid),var(--panel-solid)) padding-box,linear-gradient(135deg,#65dfb1,#8d7cff 58%,#ff8eb8) border-box; box-shadow:0 8px 24px rgba(112,93,232,.16); cursor:pointer; transition:transform .18s ease,box-shadow .18s ease,filter .18s ease; }
+.chat-launch::before { content:""; position:absolute; inset:5px; border-radius:10px; background:linear-gradient(135deg,rgba(101,223,177,.1),rgba(141,124,255,.16)); }
+.chat-launch svg { position:relative; z-index:1; width:23px; height:23px; overflow:visible; }
+.chat-launch svg path { fill:none; stroke:currentColor; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round; }
+.chat-launch svg circle { fill:currentColor; }
+.chat-launch-spark { position:absolute; z-index:2; top:-5px; right:-5px; width:18px; height:18px; display:grid; place-items:center; border:2px solid var(--panel-solid); border-radius:50%; color:#fff; background:linear-gradient(135deg,#8d7cff,#ff7aa8); box-shadow:0 4px 12px rgba(141,124,255,.42); font-size:9px; line-height:1; }
+.chat-launch:hover { transform:translateY(-2px) rotate(-1deg); filter:brightness(1.08); box-shadow:0 12px 30px rgba(112,93,232,.25); }
+.chat-launch.active { color:#fff; background:linear-gradient(135deg,#6e5be7,#8d7cff) padding-box,linear-gradient(135deg,#65dfb1,#c1b9ff,#ff8eb8) border-box; box-shadow:0 10px 30px rgba(112,93,232,.34); }
+.chat-launch:focus-visible { outline:3px solid rgba(101,223,177,.42); outline-offset:3px; }
 .top-avatar { width:42px; height:42px; padding:0; border:0; background:none; cursor:pointer; }
 .top-avatar .avatar { width:42px; height:42px; border-radius:50%; }
 .top-popover-wrap { position:relative; }
@@ -1269,6 +1278,7 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
 }
 
 @media (max-width:480px) {
+  .chat-launch { width:40px; height:40px; border-radius:14px; }
   .rtc-grid { grid-template-columns:1fr; overflow:auto; align-content:start; }
   .rtc-grid[data-count="2"],.rtc-grid[data-count="3"],.rtc-grid[data-count="4"],.rtc-grid[data-count="5"],.rtc-grid[data-count="6"] { grid-template-columns:1fr; }
   .rtc-grid .rtc-tile { min-height:210px; aspect-ratio:4/3; }
@@ -1282,5 +1292,5 @@ html[data-theme="light"] .preview-intention { background:rgba(112,93,232,.055); 
 
 @media (prefers-reduced-motion:reduce) {
   .boot-logo,.brand-spinner,.rtc-tile,.live-boost { animation:none; }
-  .app-layout,.sidebar,.main,.room-drawer,.rtc-tile video { transition:none; }
+  .app-layout,.sidebar,.main,.room-drawer,.rtc-tile video,.chat-launch { transition:none; }
 }

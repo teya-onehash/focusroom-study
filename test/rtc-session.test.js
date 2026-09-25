@@ -49,9 +49,14 @@ class FakePeerConnection {
 }
 
 class FakeChannel {
-  constructor(topic, options) { this.topic = topic; this.options = options; this.handlers = []; this.sent = []; this.tracked = []; this._presence = {}; }
-  on(type, filter, callback) { this.handlers.push({ type, event:filter.event, callback }); return this; }
-  subscribe(callback) { this.subscribeCallback = callback; queueMicrotask(() => callback("SUBSCRIBED")); return this; }
+  constructor(topic, options) { this.topic = topic; this.options = options; this.handlers = []; this.sent = []; this.tracked = []; this._presence = {}; this.subscribed = false; }
+  on(type, filter, callback) {
+    if (this.subscribed && (type === "presence" || type === "postgres_changes")) {
+      throw new Error("cannot add `" + type + "` callbacks for " + this.topic + " after `subscribe()`.");
+    }
+    this.handlers.push({ type, event:filter.event, callback }); return this;
+  }
+  subscribe(callback) { this.subscribeCallback = callback; this.subscribed = true; queueMicrotask(() => callback("SUBSCRIBED")); return this; }
   async track(value) { this.tracked.push(value); return "ok"; }
   async untrack() { this.untracked = true; return "ok"; }
   async send(value) { this.sent.push(value); return "ok"; }
@@ -65,8 +70,14 @@ function setup() {
   const channels = [];
   const supabase = {
     realtime:{ setAuth:async () => {} },
-    channel(topic, options) { const channel = new FakeChannel(topic, options); channels.push(channel); return channel; },
-    async removeChannel(channel) { channel.removed = true; }
+    channel(topic, options) {
+      const realtimeTopic = "realtime:" + topic;
+      const existing = channels.find((channel) => channel.topic === realtimeTopic && !channel.removed);
+      if (existing) return existing;
+      const channel = new FakeChannel(realtimeTopic, options); channels.push(channel); return channel;
+    },
+    getChannels() { return channels.filter((channel) => !channel.removed); },
+    async removeChannel(channel) { channel.removed = true; channel.subscribed = false; }
   };
   return { supabase, channels };
 }
@@ -184,4 +195,32 @@ test("keeps the complete public-room roster while limiting only the media circle
     ["user-e", false]
   ]);
   assert.equal(session.peers.size, 2);
+});
+
+test("replaces a stale subscribed channel before registering presence on rejoin", async () => {
+  const { supabase, channels } = setup();
+  const first = new RealtimeWebRTCSession({
+    supabase,
+    topic:"study-room:public:rejoin-room",
+    clientId:"first-tab",
+    localStream:new FakeMediaStream(),
+    presence:{ user_id:"same-user" }
+  });
+  await first.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  const staleChannel = channels[0];
+
+  const replacement = new RealtimeWebRTCSession({
+    supabase,
+    topic:"study-room:public:rejoin-room",
+    clientId:"replacement-tab",
+    localStream:new FakeMediaStream(),
+    presence:{ user_id:"same-user" }
+  });
+  await replacement.start();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(staleChannel.removed, true);
+  assert.notEqual(replacement.channel, staleChannel);
+  assert.equal(supabase.getChannels().length, 1);
 });

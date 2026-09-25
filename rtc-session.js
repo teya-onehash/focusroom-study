@@ -50,40 +50,63 @@ export class RealtimeWebRTCSession {
   async start() {
     if (this.started) return;
     this.started = true;
-    if (this.authSession && this.authSession.access_token) {
-      await this.supabase.realtime.setAuth(this.authSession.access_token);
-    } else {
-      await this.supabase.realtime.setAuth();
-    }
-
-    const self = this;
-    this.channel = this.supabase.channel(this.topic, {
-      config: {
-        private: true,
-        broadcast: { self: false, ack: true },
-        presence: { key: this.clientId }
+    try {
+      if (this.authSession && this.authSession.access_token) {
+        await this.supabase.realtime.setAuth(this.authSession.access_token);
+      } else {
+        await this.supabase.realtime.setAuth();
       }
-    });
 
-    this.channel
-      .on("broadcast", { event: "webrtc" }, function (message) {
-        self.handleSignal(message && (message.payload || message));
-      })
-      .on("broadcast", { event: "room-event" }, function (message) {
-        const event = message && (message.payload || message);
-        if (!event || event.from === self.clientId) return;
-        self.onEvent(event.kind, event.payload || {}, event);
-      })
-      .on("presence", { event: "sync" }, function () {
-        self.syncPresence();
-      })
-      .subscribe(async function (status, error) {
-        self.onStatus(status, error || null);
-        if (status === "SUBSCRIBED") {
-          await self.channel.track(self.localPresence);
-          await self.sendSignal("ready", null, { presence: self.localPresence });
+      // supabase-js reuses a channel object when the topic matches. A stale
+      // joined channel cannot accept new Presence callbacks, so fully remove
+      // it before wiring a fresh session during a retry or rapid rejoin.
+      if (typeof this.supabase.getChannels === "function") {
+        const realtimeTopic = "realtime:" + this.topic;
+        const staleChannels = this.supabase.getChannels().filter(function (channel) {
+          return channel && channel.topic === realtimeTopic;
+        });
+        for (const staleChannel of staleChannels) {
+          await this.supabase.removeChannel(staleChannel);
+        }
+      }
+
+      const self = this;
+      this.channel = this.supabase.channel(this.topic, {
+        config: {
+          private: true,
+          broadcast: { self: false, ack: true },
+          presence: { key: this.clientId }
         }
       });
+
+      this.channel
+        .on("broadcast", { event: "webrtc" }, function (message) {
+          self.handleSignal(message && (message.payload || message));
+        })
+        .on("broadcast", { event: "room-event" }, function (message) {
+          const event = message && (message.payload || message);
+          if (!event || event.from === self.clientId) return;
+          self.onEvent(event.kind, event.payload || {}, event);
+        })
+        .on("presence", { event: "sync" }, function () {
+          self.syncPresence();
+        })
+        .subscribe(async function (status, error) {
+          self.onStatus(status, error || null);
+          if (status === "SUBSCRIBED" && self.channel) {
+            await self.channel.track(self.localPresence);
+            await self.sendSignal("ready", null, { presence: self.localPresence });
+          }
+        });
+    } catch (error) {
+      const failedChannel = this.channel;
+      this.channel = null;
+      this.started = false;
+      if (failedChannel) {
+        try { await this.supabase.removeChannel(failedChannel); } catch (cleanupError) {}
+      }
+      throw error;
+    }
   }
 
   syncPresence() {

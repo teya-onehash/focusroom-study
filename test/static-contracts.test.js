@@ -38,3 +38,17 @@ test("public rooms communicate open entry without confusing rhythm labels", () =
   assert.match(app, /No join limit/i);
   assert.doesNotMatch(app, /preview-status[^\n]*50\/10/);
 });
+
+test("top navigation uses a styled accessible SVG chat control", () => {
+  assert.match(app, /class="chat-launch/);
+  assert.match(app, /const chatLabel = state\.chatMenuOpen \? "Close chats" : "Open chats"/);
+  assert.match(app, /data-toggle-chat aria-label="' \+ chatLabel \+ '" aria-expanded=/);
+  assert.match(app, /<svg viewBox="0 0 24 24"/);
+  assert.match(css, /\.chat-launch:focus-visible/);
+});
+
+test("public occupancy reuses the subscribed count channel", () => {
+  assert.match(app, /roomCountReady/);
+  assert.match(app, /const readyChannel = state\.roomCountReady\[room\.slug\]/);
+  assert.doesNotMatch(app, /state\.presenceChannel = supabase\.channel\(channelName/);
+});

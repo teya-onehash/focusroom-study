@@ -1,6 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260925-2";
-import { RealtimeWebRTCSession } from "./rtc-session.js?v=20260925-2";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260925-3";
+import { RealtimeWebRTCSession } from "./rtc-session.js?v=20260925-3";
 
 // Public rooms never reject someone because the room is busy. WebRTC media is
 // divided into small, deterministic circles so the open room can grow without
@@ -73,6 +73,7 @@ const state = {
   voiceTimer: null,
   privateRooms: [],
   roomCounts: {},
+  roomCountReady: {},
   channels: [],
   communityChannels: [],
   activeChannelId: null,
@@ -115,6 +116,7 @@ const state = {
   focusHeartbeat: null,
   focusHeartbeatBusy: false,
   leavingMeeting: false,
+  joiningRoom: false,
   joinDraft: { intention: "", duration: Number(studyPreferences.defaultDuration), camera: Boolean(studyPreferences.defaultCamera), microphone: Boolean(studyPreferences.defaultMicrophone) },
   preferences: studyPreferences,
   timerSeconds: 25 * 60,
@@ -374,8 +376,10 @@ function appShell(content, title) {
   const accountMenu = state.accountMenuOpen ? '<div class="account-menu popover"><div class="account-summary">' + avatarMarkup(state.profile) + '<span><strong>' + esc(name) + '</strong><small>' + membership + '</small></span></div><button data-member-profile="' + esc(state.user.id) + '">● View public profile</button><button data-view="profile">✎ Edit profile</button><button data-view="settings">⚙ Privacy & settings</button><button data-view="plus">✦ Manage membership</button>' + (state.admin && state.admin.is_admin ? '<button data-view="admin">◆ Admin center</button>' : '') + '<button class="danger" data-signout>↪ Log out</button></div>' : '';
   const chatRows = state.conversations.slice(0, 4).map(function (conversation) { const person = conversationPerson(conversation); return '<button data-conversation="' + esc(conversation.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + esc(messagePreview(conversation)) + '</small></span></button>'; }).join("");
   const chatMenu = state.chatMenuOpen ? '<div class="quick-chat popover"><div class="popover-title"><strong>Chats</strong><button data-view="community">Open all →</button></div><button class="channel-shortcut" data-channel-slug="general"><span>#</span><strong>General channel</strong></button>' + (chatRows || '<p class="empty">Your conversations will appear here.</p>') + '</div>' : '';
+  const chatLabel = state.chatMenuOpen ? "Close chats" : "Open chats";
+  const chatButton = '<button class="chat-launch' + (state.chatMenuOpen ? ' active' : '') + '" data-toggle-chat aria-label="' + chatLabel + '" aria-expanded="' + String(state.chatMenuOpen) + '" title="' + chatLabel + '"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.2 5.3h9.6a3.4 3.4 0 0 1 3.4 3.4v4.7a3.4 3.4 0 0 1-3.4 3.4H10l-4.4 3 .8-3H6.2a3.4 3.4 0 0 1-3.4-3.4V8.7a3.4 3.4 0 0 1 3.4-3.4Z"></path><circle cx="8" cy="11.1" r="1"></circle><circle cx="12" cy="11.1" r="1"></circle><circle cx="16" cy="11.1" r="1"></circle></svg><span class="chat-launch-spark" aria-hidden="true">✦</span></button>';
   const collapsed = state.navCollapsed ? " nav-collapsed" : "";
-  app.innerHTML = baseBackground() + '<div class="app-layout' + collapsed + '"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + (state.navCollapsed ? ' collapsed' : '') + '"><button class="brand brand-button sidebar-brand" data-view="home" aria-label="Go to home">' + brandLogo() + '<span class="brand-name">Mellow<br><small>Commons</small></span></button><nav class="side-nav">' + navItems() + '</nav><div class="sidebar-streak"><span>🔥</span><strong>' + streakDays() + ' day streak</strong><small>Focus for 30m to grow it</small></div></aside><main class="main"><header class="app-top"><div class="top-title"><button class="btn icon-btn nav-toggle" data-toggle-nav aria-label="' + (state.navCollapsed ? 'Expand navigation' : 'Collapse navigation') + '" aria-pressed="' + String(state.navCollapsed) + '">☰</button><h2>' + esc(title) + '</h2><span class="daily-time">' + dailyTimeLabel() + '</span></div><div class="app-top-actions"><button class="unlock-button" data-view="plus">Unlock more</button><div class="top-popover-wrap"><button class="btn icon-btn top-icon" data-toggle-chat aria-label="Open chats">◌</button>' + chatMenu + '</div>' + themeToggle() + '<div class="top-popover-wrap"><button class="avatar-button top-avatar" data-toggle-account aria-label="Open account menu">' + avatarMarkup(state.profile) + '</button>' + accountMenu + '</div></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
+  app.innerHTML = baseBackground() + '<div class="app-layout' + collapsed + '"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + (state.navCollapsed ? ' collapsed' : '') + '"><button class="brand brand-button sidebar-brand" data-view="home" aria-label="Go to home">' + brandLogo() + '<span class="brand-name">Mellow<br><small>Commons</small></span></button><nav class="side-nav">' + navItems() + '</nav><div class="sidebar-streak"><span>🔥</span><strong>' + streakDays() + ' day streak</strong><small>Focus for 30m to grow it</small></div></aside><main class="main"><header class="app-top"><div class="top-title"><button class="btn icon-btn nav-toggle" data-toggle-nav aria-label="' + (state.navCollapsed ? 'Expand navigation' : 'Collapse navigation') + '" aria-pressed="' + String(state.navCollapsed) + '">☰</button><h2>' + esc(title) + '</h2><span class="daily-time">' + dailyTimeLabel() + '</span></div><div class="app-top-actions"><button class="unlock-button" data-view="plus">Unlock more</button><div class="top-popover-wrap">' + chatButton + chatMenu + '</div>' + themeToggle() + '<div class="top-popover-wrap"><button class="avatar-button top-avatar" data-toggle-account aria-label="Open account menu">' + avatarMarkup(state.profile) + '</button>' + accountMenu + '</div></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
   const sidebar = app.querySelector(".sidebar");
   if (sidebar) sidebar.insertAdjacentHTML("beforeend", '<button class="sidebar-close" data-toggle-nav aria-label="Close navigation">☰</button>');
   if (state.mobileNav) app.querySelector(".app-layout")?.insertAdjacentHTML("afterbegin", '<button class="nav-scrim" data-toggle-nav aria-label="Close navigation"></button>');
@@ -742,15 +746,20 @@ async function loadPublicRooms() {
   const result = await supabase.from("rooms").select("*").eq("active", true).order("sort_order");
   if (!result.error) {
     state.rooms = result.data || [];
-    subscribeRoomCounts();
+    await subscribeRoomCounts();
   }
 }
 
-function subscribeRoomCounts() {
-  state.channels.forEach(function (channel) { supabase.removeChannel(channel); });
+async function subscribeRoomCounts() {
+  await Promise.all(state.channels.map(function (channel) {
+    return supabase.removeChannel(channel).catch(function () {});
+  }));
   state.channels = [];
+  state.roomCountReady = {};
   state.rooms.forEach(function (room) {
     const channel = supabase.channel("presence:" + room.slug, { config: { presence: { key: "observer-" + crypto.randomUUID() } } });
+    let markReady;
+    state.roomCountReady[room.slug] = new Promise(function (resolve) { markReady = resolve; });
     channel.on("presence", { event: "sync" }, function () {
       const presence = channel.presenceState();
       const connectedUsers = new Set();
@@ -760,7 +769,10 @@ function subscribeRoomCounts() {
       state.roomCounts[room.slug] = connectedUsers.size;
       const countEls = document.querySelectorAll('[data-room-count="' + room.slug + '"]');
       countEls.forEach(function (el) { el.textContent = state.roomCounts[room.slug]; });
-    }).subscribe();
+    }).subscribe(function (status) {
+      if (status === "SUBSCRIBED") markReady(channel);
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") markReady(null);
+    });
     state.channels.push(channel);
   });
 }
@@ -2214,7 +2226,9 @@ async function mountMeeting(room, isPrivate, joinOptions) {
         const label = document.querySelector("#meetingStatus");
         if (status === "SUBSCRIBED") {
           if (label) label.textContent = isPrivate ? "Private room · connected" : "Live · open room · no join limit";
-          trackPresence(room, isPrivate);
+          trackPresence(room, isPrivate).catch(function () {
+            showToast("The live room count is reconnecting. Your study stream is still active.", true);
+          });
         }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           if (label) label.textContent = "Connection interrupted";
@@ -2226,23 +2240,29 @@ async function mountMeeting(room, isPrivate, joinOptions) {
     await state.rtcSession.start();
     startRoomTimer(true);
   } catch (error) {
+    const failedSession = state.rtcSession;
+    state.rtcSession = null;
+    if (failedSession) await failedSession.stop({ notify:false }).catch(function () {});
+    if (state.localCallStream) state.localCallStream.getTracks().forEach(function (track) { track.stop(); });
+    state.localCallStream = null;
+    state.rtcClientId = null;
     const grid = document.querySelector("#roomGrid");
-    if (grid) grid.innerHTML = '<div class="meeting-error"><h2>Your study stream could not start</h2><p>' + esc(error.message) + '</p><button class="btn btn-primary" data-leave-meeting>Return to rooms</button></div>';
+    if (grid) grid.innerHTML = '<div class="meeting-error"><h2>Your study stream could not start</h2><p>We could not open the secure room connection. Return to rooms and try once more.</p><button class="btn btn-primary" data-leave-meeting>Return to rooms</button></div>';
     if (state.focusVisitId) await endFocusVisit();
   }
 }
 
-function trackPresence(room, isPrivate) {
-  if (state.presenceChannel) supabase.removeChannel(state.presenceChannel);
+async function trackPresence(room, isPrivate) {
+  if (state.presenceChannel) await state.presenceChannel.untrack().catch(function () {});
   state.presenceChannel = null;
   // Native private-room presence already lives on its authorized WebRTC channel.
-  // The legacy public channel remains only for public lobby occupancy cards.
+  // Public occupancy reuses the already-subscribed lobby channel because
+  // supabase-js intentionally returns one channel object per topic.
   if (isPrivate) return;
-  const channelName = "presence:" + room.slug;
-  state.presenceChannel = supabase.channel(channelName, { config:{ presence:{ key:state.user.id } } });
-  state.presenceChannel.subscribe(async function (status) {
-    if (status === "SUBSCRIBED") await state.presenceChannel.track({ user_id:state.user.id, display_name:state.profile.display_name, joined_at:new Date().toISOString() });
-  });
+  const readyChannel = state.roomCountReady[room.slug] ? await state.roomCountReady[room.slug] : null;
+  if (!readyChannel) throw new Error("Room count channel unavailable");
+  state.presenceChannel = readyChannel;
+  await readyChannel.track({ user_id:state.user.id, display_name:state.profile.display_name, joined_at:new Date().toISOString() });
 }
 
 async function leaveMeeting(endCall) {
@@ -2263,7 +2283,7 @@ async function leaveMeeting(endCall) {
     state.roomParticipants = [];
     state.roomPeerStates = {};
     state.roomChat = [];
-    if (state.presenceChannel) { await state.presenceChannel.untrack(); await supabase.removeChannel(state.presenceChannel); state.presenceChannel = null; }
+    if (state.presenceChannel) { await state.presenceChannel.untrack().catch(function () {}); state.presenceChannel = null; }
     if (state.rtcSession) {
       const rtc = state.rtcSession;
       state.rtcSession = null;
@@ -2607,6 +2627,10 @@ document.addEventListener("submit", async function (event) {
     if (preferredRoom) showJoinLobby(preferredRoom, false);
   }
   if (form.id === "joinLobbyForm") {
+    if (state.joiningRoom) return;
+    state.joiningRoom = true;
+    const joinButton = form.querySelector('button[type="submit"]');
+    if (joinButton) { joinButton.disabled = true; joinButton.textContent = "Joining…"; }
     const data = new FormData(form);
     let room = state.pendingRoom;
     const isPrivate = state.pendingPrivate;
@@ -2624,8 +2648,12 @@ document.addEventListener("submit", async function (event) {
     state.pendingRoom = null;
     state.pendingPrivate = false;
     state.pendingDmStart = null;
-    if (dmStart) room = await createDmCall(dmStart);
-    if (room) await mountMeeting(room, isPrivate, state.joinDraft);
+    try {
+      if (dmStart) room = await createDmCall(dmStart);
+      if (room) await mountMeeting(room, isPrivate, state.joinDraft);
+    } finally {
+      state.joiningRoom = false;
+    }
   }
   if (form.id === "goalForm") { const data = new FormData(form); await saveGoal(String(data.get("title")).trim()); }
   if (form.id === "encouragementForm") await submitEncouragement(form);
