@@ -1,5 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS } from "./config.js?v=20260924-17";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260925-1";
+import { RealtimeWebRTCSession } from "./rtc-session.js?v=20260925-1";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
@@ -40,6 +41,10 @@ const state = {
   activeConversationId: null,
   messages: [],
   messageMedia: {},
+  messageReactions: {},
+  messageMenuId: null,
+  messageEmojiOpen: false,
+  messageDraft: "",
   dmChannel: null,
   dmCalls: [],
   pendingDmCalls: [],
@@ -47,6 +52,16 @@ const state = {
   notifiedDmCalls: new Set(),
   activeDmCallId: null,
   pendingDmStart: null,
+  socialCallPerson: null,
+  socialCallMode: null,
+  socialCallConnected: false,
+  socialCallStartedAt: null,
+  socialCallTimerId: null,
+  socialMicMuted: false,
+  socialVideoMuted: false,
+  localCallStream: null,
+  remoteCallStream: null,
+  callFacingMode: "user",
   voiceRecorder: null,
   voiceStream: null,
   voiceChunks: [],
@@ -67,7 +82,20 @@ const state = {
   presenceChannel: null,
   view: "home",
   activeRoom: null,
-  jitsi: null,
+  rtcSession: null,
+  rtcClientId: null,
+  roomParticipants: [],
+  roomPeerStates: {},
+  roomChat: [],
+  roomChatOpen: false,
+  roomPeopleOpen: false,
+  roomEffectsOpen: false,
+  roomEffect: localStorage.getItem("mellow-room-effect") || "natural",
+  roomMirror: localStorage.getItem("mellow-room-mirror") !== "false",
+  roomQuality: localStorage.getItem("mellow-room-quality") || "balanced",
+  roomAudioOnly: false,
+  roomConnectedAt: null,
+  roomTimerId: null,
   previewStream: null,
   previewAudioContext: null,
   previewAnimation: null,
@@ -93,7 +121,8 @@ const state = {
   audio: null,
   authMode: "signup",
   pendingVerificationEmail: "",
-  mobileNav: false
+  mobileNav: false,
+  navCollapsed: localStorage.getItem("mellow-nav-collapsed") === "true"
 };
 
 const blogs = [
@@ -159,6 +188,44 @@ function stickerGlyph(name) {
   return ({ moon:"☾", sprout:"🌱", sparkles:"✦", books:"📚", coffee:"☕", flower:"✿" })[name] || "";
 }
 
+function brandLogo() {
+  return '<span class="brand-logo" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><defs><linearGradient id="mellowMark" x1="9" y1="8" x2="56" y2="58" gradientUnits="userSpaceOnUse"><stop stop-color="#a99cff"/><stop offset=".55" stop-color="#7461ef"/><stop offset="1" stop-color="#55d7ad"/></linearGradient></defs><rect x="3" y="3" width="58" height="58" rx="19" fill="url(#mellowMark)"/><path d="M14 43V28c0-8 4.8-13 12-13s12 5.2 12 13v15M26 43V30c0-8 4.8-13 12-13s12 5 12 13v13" fill="none" stroke="white" stroke-width="5.2" stroke-linecap="round"/><circle cx="32" cy="44" r="3.2" fill="#dfffee"/></svg></span>';
+}
+
+async function resolveIceServers() {
+  if (!WEBRTC_TURN_FUNCTION) return WEBRTC_ICE_SERVERS;
+  try {
+    const response = await supabase.functions.invoke(WEBRTC_TURN_FUNCTION);
+    const relays = response.data && Array.isArray(response.data.iceServers) ? response.data.iceServers : [];
+    if (!response.error && relays.length) return WEBRTC_ICE_SERVERS.concat(relays);
+  } catch (error) { /* Fall back to STUN and surface relay failures through connection state. */ }
+  return WEBRTC_ICE_SERVERS;
+}
+
+const profileBanners = [
+  ["midnight", "Midnight"], ["aurora", "Aurora"], ["cherry", "Cherry pop"],
+  ["ocean", "Ocean"], ["sunset", "Sunset"], ["matcha", "Matcha"],
+  ["notebook", "Notebook"], ["arcade", "Arcade"]
+];
+
+const achievementLevels = [
+  [100, "Commons Legend", "✦"], [60, "Quiet Power", "◆"], [30, "Deep Roots", "❋"],
+  [14, "Steady Glow", "☀"], [7, "Cozy Week", "☕"], [3, "Soft Start", "🌱"],
+  [1, "First Light", "◌"]
+];
+
+function safeBanner(value) {
+  const banner = String(value || "midnight");
+  return profileBanners.some(function (item) { return item[0] === banner; }) ? banner : "midnight";
+}
+
+function showAchievementCelebration(days) {
+  const badge = achievementLevels.find(function (item) { return item[0] === Number(days); });
+  if (!badge) return;
+  const confetti = Array.from({ length:18 }, function (_, index) { return '<i style="--i:' + index + '"></i>'; }).join("");
+  showModal("Achievement unlocked", '<div class="achievement-celebration"><div class="celebration-confetti" aria-hidden="true">' + confetti + '</div><span class="celebration-badge">' + badge[2] + '</span><span class="eyebrow">' + badge[0] + ' day streak</span><h2>' + esc(badge[1]) + '</h2><p>This badge is earned from real completed focus days. Keep showing up at your own pace.</p><button class="btn btn-primary" data-close-modal>Nice ✦</button></div>');
+}
+
 function authReturnUrl() {
   return new URL(".", window.location.href).href.split("#")[0].split("?")[0];
 }
@@ -222,7 +289,7 @@ function setTheme(theme) {
 }
 
 function publicHeader() {
-  return '<header class="topbar"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>Mellow Commons</a><nav class="top-links"><a href="#rooms">Rooms</a><a href="#features">Features</a><a href="#pricing">Plans</a><a href="#journal">Journal</a>' + themeToggle() + '<button class="btn btn-sm" data-auth="login">Log in</button><button class="btn btn-primary btn-sm" data-auth="signup">Join free</button></nav></header>';
+  return '<header class="topbar"><a class="brand" href="#" data-public-home aria-label="Mellow Commons home">' + brandLogo() + '<span>Mellow Commons</span></a><nav class="top-links"><a href="#rooms">Rooms</a><a href="#features">Features</a><a href="#pricing">Plans</a><a href="#journal">Journal</a>' + themeToggle() + '<button class="btn btn-sm" data-auth="login">Log in</button><button class="btn btn-primary btn-sm" data-auth="signup">Join free</button></nav></header>';
 }
 
 function roomCards(publicMode) {
@@ -266,16 +333,16 @@ function renderLanding() {
     '<main><section class="hero"><div class="hero-copy"><span class="eyebrow">Live focus rooms · free to join</span><h1><span class="gradient-text">Open a room.</span><br>Start the work.</h1><p>Choose what you are working on, test your camera and microphone, and focus beside other students in an always-open study space.</p><div class="hero-actions"><button class="btn btn-primary" data-auth="signup">Create a free account</button><a class="btn" href="#rooms">See the live rooms</a></div><div class="trust-row"><span>Device check before joining</span><span>Camera always optional</span><span>Real live counts</span></div></div>' +
     '<div class="hero-visual product-preview" aria-label="Mellow Commons product preview"><div class="preview-top"><div><span class="eyebrow">Live focus floor</span><h2>Choose your room</h2></div><span class="online-pill"><i></i>' + totalOnline + ' online</span></div><div class="preview-intention"><span>Today’s intention</span><strong>Finish one clear task</strong><div class="preview-progress"><i></i></div></div><div class="preview-room-list">' + (previewRooms || '<div class="skeleton"></div>') + '</div><div class="preview-footer"><span>25</span><span class="active">50</span><span>90 min</span><button class="btn btn-primary btn-sm" data-auth="signup">Start session</button></div></div></section>' +
     '<section class="section" id="rooms"><div class="section-head"><div><span class="eyebrow">Live rooms</span><h2>Find your focus atmosphere</h2></div><p>Every number is based on people actually connected to a room. Sign in to join with camera and microphone controls.</p></div><div class="room-grid">' + roomCards(true) + '</div></section>' +
-    '<section class="section session-steps"><div class="section-head"><div><span class="eyebrow">A real session, not another feed</span><h2>From intention to finished work</h2></div></div><div class="grid-3"><article class="card step-card"><span>01</span><h3>Name the task</h3><p>Write one concrete intention and choose a 25, 50, or 90 minute block.</p></article><article class="card step-card"><span>02</span><h3>Check your setup</h3><p>Preview video, confirm microphone activity, and choose the exact devices you want.</p></article><article class="card step-card"><span>03</span><h3>Focus with others</h3><p>Join muted or camera-off, use the timer, and save finished sessions to your history.</p></article></div></section>' +
-    '<section class="section" id="features"><div class="section-head"><div><span class="eyebrow">Made for momentum</span><h2>More than a video call</h2></div></div><div class="bento"><article class="card feature-card"><div class="feature-icon">◷</div><div><h3>Focus timer and goals</h3><p>Choose 25 or 50 minutes, write the next task, and save completed sessions to your history.</p></div></article><article class="card feature-card"><div class="feature-icon">♡</div><div><h3>Real encouragement</h3><p>Send thoughtful support to people who are showing up. Daily allowances scale with your membership.</p></div></article><article class="card feature-card"><div class="feature-icon">☾</div><div><h3>Cozy ambience</h3><p>Use generated rain, café, or fireside sound without opening another distracting tab.</p></div></article></div></section>' +
+    '<section class="section session-steps"><div class="section-head"><div><span class="eyebrow">A real session, not another feed</span><h2>From intention to finished work</h2></div></div><div class="grid-3"><article class="card step-card"><span>01</span><h3>Name the task</h3><p>Write one concrete intention and choose a preset or your own focus duration.</p></article><article class="card step-card"><span>02</span><h3>Check your setup</h3><p>Preview video, confirm microphone activity, and choose the exact devices you want.</p></article><article class="card step-card"><span>03</span><h3>Focus with others</h3><p>Join muted or camera-off, use the timer, and save finished sessions to your history.</p></article></div></section>' +
+    '<section class="section" id="features"><div class="section-head"><div><span class="eyebrow">Made for momentum</span><h2>More than a video call</h2></div></div><div class="bento"><article class="card feature-card"><div class="feature-icon">◷</div><div><h3>Focus timer and goals</h3><p>Choose a preset or custom duration, write the next task, and save completed sessions to your history.</p></div></article><article class="card feature-card"><div class="feature-icon">♡</div><div><h3>Real encouragement</h3><p>Send thoughtful support to people who are showing up. Daily allowances scale with your membership.</p></div></article><article class="card feature-card"><div class="feature-icon">☾</div><div><h3>Cozy ambience</h3><p>Use generated rain, café, or fireside sound without opening another distracting tab.</p></div></article></div></section>' +
     '<section class="section" id="pricing"><div class="section-head"><div><span class="eyebrow">Simple student pricing</span><h2>Free for focus. Upgrade for connection.</h2></div><p>Public-room time scales by plan. Private audio and video calls are reserved for Premium and Buddy.</p></div><div class="pricing-grid pricing-four">' + pricingCards() + '</div><p class="plan-fine-print">*Unlimited messaging is intended for normal person-to-person use and remains protected by anti-spam, blocking, reporting, file-size, and safety controls.</p></section>' +
     '<section class="section" id="journal"><div class="section-head"><div><span class="eyebrow">Focus journal</span><h2>Small ideas that help</h2></div></div><div class="grid-3">' + blogCards() + '</div></section></main>' +
-    '<footer class="footer"><div><div class="brand"><span class="brand-mark"></span>Mellow Commons</div><p>Study together without the pressure.</p></div><div><button class="btn btn-sm" data-privacy>Privacy</button> <button class="btn btn-sm" data-auth="login">Member login</button></div></footer></div>';
+    '<footer class="footer"><div><button class="brand brand-button" data-public-home>' + brandLogo() + '<span>Mellow Commons</span></button><p>Study together without the pressure.</p></div><div><button class="btn btn-sm" data-privacy>Privacy</button> <button class="btn btn-sm" data-auth="login">Member login</button></div></footer></div>';
 }
 
 function renderAuth() {
   const signup = state.authMode === "signup";
-  app.innerHTML = baseBackground() + '<main class="auth-stage"><button class="auth-stage-close" data-public-home aria-label="Close">×</button><section class="auth-promise"><a class="brand" href="#" data-public-home><span class="brand-mark"></span>Mellow Commons</a><span class="eyebrow">A softer place to get things done</span><h1>Study beside people who are trying too.</h1><p>Join live rooms, track quiet progress, find a study buddy, and keep your momentum in one calm student commons.</p><div class="auth-mini-room"><div class="auth-avatar-row"><i></i><i></i><i></i><i></i></div><strong>Deep Focus · live now</strong><small>Camera is always your choice</small></div></section><section class="card auth-card auth-modal"><div class="auth-head"><div><span class="eyebrow">' + (signup ? 'Join the commons' : 'Welcome back') + '</span><h2>' + (signup ? 'Create your account' : 'Log in to Mellow Commons') + '</h2></div>' + themeToggle() + '</div><button class="btn google-auth" data-google-auth><span>G</span>Continue with Google</button><div class="auth-divider"><span>or use email</span></div><form class="form" id="authForm">' +
+  app.innerHTML = baseBackground() + '<main class="auth-stage"><button class="auth-stage-close" data-public-home aria-label="Close">×</button><section class="auth-promise"><a class="brand" href="#" data-public-home>' + brandLogo() + '<span>Mellow Commons</span></a><span class="eyebrow">A softer place to get things done</span><h1>Study beside people who are trying too.</h1><p>Join live rooms, track quiet progress, find a study buddy, and keep your momentum in one calm student commons.</p><div class="auth-mini-room"><div class="auth-avatar-row"><i></i><i></i><i></i><i></i></div><strong>Deep Focus · live now</strong><small>Camera is always your choice</small></div></section><section class="card auth-card auth-modal"><div class="auth-head"><div><span class="eyebrow">' + (signup ? 'Join the commons' : 'Welcome back') + '</span><h2>' + (signup ? 'Create your account' : 'Log in to Mellow Commons') + '</h2></div>' + themeToggle() + '</div><button class="btn google-auth" data-google-auth><span>G</span>Continue with Google</button><div class="auth-divider"><span>or use email</span></div><form class="form" id="authForm">' +
     (signup ? '<div class="field"><label for="displayName">Display name</label><input id="displayName" name="displayName" minlength="2" maxlength="40" required autocomplete="name" placeholder="How students will see you"></div>' : '') +
     '<div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com"></div><div class="field password-field"><label for="password">Password</label><input id="password" name="password" type="password" minlength="8" required autocomplete="' + (signup ? 'new-password' : 'current-password') + '" placeholder="At least 8 characters"><button type="button" data-password-toggle aria-label="Show password">Show</button></div>' +
     (!signup ? '<button type="button" class="text-action" data-forgot-password>Forgot password?</button>' : '') + '<button class="btn btn-primary auth-submit" type="submit">' + (signup ? 'Create free account' : 'Log in') + '</button><p class="form-note">' + (signup ? 'By joining, you agree to keep the commons respectful. Camera and microphone stay off until you choose otherwise.' : 'Your goals, messages, and focus history will be waiting.') + '</p></form><p class="auth-switch">' + (signup ? 'Already a member? <button data-auth-tab="login">Log in</button>' : 'New here? <button data-auth-tab="signup">Create an account</button>') + '</p>' + (!signup ? '<button class="btn btn-link" data-open-resend>Didn’t receive a verification email?</button>' : '') + '</section></main>';
@@ -289,7 +356,7 @@ function navItems() {
   ];
   if (state.admin && state.admin.is_admin) items.push(["admin","◆","Admin center"]);
   return items.map(function (item) {
-    return '<button class="side-link ' + (state.view === item[0] ? 'active' : '') + '" data-view="' + item[0] + '"><span class="nav-icon">' + item[1] + '</span>' + item[2] + '</button>';
+    return '<button class="side-link ' + (state.view === item[0] ? 'active' : '') + '" data-view="' + item[0] + '" title="' + esc(item[2]) + '" aria-label="' + esc(item[2]) + '"><span class="nav-icon" aria-hidden="true">' + item[1] + '</span><span class="nav-label">' + item[2] + '</span></button>';
   }).join("");
 }
 
@@ -302,7 +369,11 @@ function appShell(content, title) {
   const accountMenu = state.accountMenuOpen ? '<div class="account-menu popover"><div class="account-summary">' + avatarMarkup(state.profile) + '<span><strong>' + esc(name) + '</strong><small>' + membership + '</small></span></div><button data-member-profile="' + esc(state.user.id) + '">● View public profile</button><button data-view="profile">✎ Edit profile</button><button data-view="settings">⚙ Privacy & settings</button><button data-view="plus">✦ Manage membership</button>' + (state.admin && state.admin.is_admin ? '<button data-view="admin">◆ Admin center</button>' : '') + '<button class="danger" data-signout>↪ Log out</button></div>' : '';
   const chatRows = state.conversations.slice(0, 4).map(function (conversation) { const person = conversationPerson(conversation); return '<button data-conversation="' + esc(conversation.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + esc(messagePreview(conversation)) + '</small></span></button>'; }).join("");
   const chatMenu = state.chatMenuOpen ? '<div class="quick-chat popover"><div class="popover-title"><strong>Chats</strong><button data-view="community">Open all →</button></div><button class="channel-shortcut" data-channel-slug="general"><span>#</span><strong>General channel</strong></button>' + (chatRows || '<p class="empty">Your conversations will appear here.</p>') + '</div>' : '';
-  app.innerHTML = baseBackground() + '<div class="app-layout"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + '"><div class="brand"><span class="brand-mark"></span><span>Mellow<br><small>Commons</small></span></div><nav class="side-nav">' + navItems() + '</nav><div class="sidebar-streak"><span>🔥</span><strong>' + streakDays() + ' day streak</strong><small>Focus for 30m to grow it</small></div></aside><main class="main"><header class="app-top"><div class="top-title"><button class="btn icon-btn mobile-menu" data-toggle-nav>☰</button><h2>' + esc(title) + '</h2><span class="daily-time">' + dailyTimeLabel() + '</span></div><div class="app-top-actions"><button class="unlock-button" data-view="plus">Unlock more</button><div class="top-popover-wrap"><button class="btn icon-btn top-icon" data-toggle-chat aria-label="Open chats">◌</button>' + chatMenu + '</div>' + themeToggle() + '<div class="top-popover-wrap"><button class="avatar-button top-avatar" data-toggle-account aria-label="Open account menu">' + avatarMarkup(state.profile) + '</button>' + accountMenu + '</div></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
+  const collapsed = state.navCollapsed ? " nav-collapsed" : "";
+  app.innerHTML = baseBackground() + '<div class="app-layout' + collapsed + '"><aside class="sidebar ' + (state.mobileNav ? 'open' : '') + (state.navCollapsed ? ' collapsed' : '') + '"><button class="brand brand-button sidebar-brand" data-view="home" aria-label="Go to home">' + brandLogo() + '<span class="brand-name">Mellow<br><small>Commons</small></span></button><nav class="side-nav">' + navItems() + '</nav><div class="sidebar-streak"><span>🔥</span><strong>' + streakDays() + ' day streak</strong><small>Focus for 30m to grow it</small></div></aside><main class="main"><header class="app-top"><div class="top-title"><button class="btn icon-btn nav-toggle" data-toggle-nav aria-label="' + (state.navCollapsed ? 'Expand navigation' : 'Collapse navigation') + '" aria-pressed="' + String(state.navCollapsed) + '">☰</button><h2>' + esc(title) + '</h2><span class="daily-time">' + dailyTimeLabel() + '</span></div><div class="app-top-actions"><button class="unlock-button" data-view="plus">Unlock more</button><div class="top-popover-wrap"><button class="btn icon-btn top-icon" data-toggle-chat aria-label="Open chats">◌</button>' + chatMenu + '</div>' + themeToggle() + '<div class="top-popover-wrap"><button class="avatar-button top-avatar" data-toggle-account aria-label="Open account menu">' + avatarMarkup(state.profile) + '</button>' + accountMenu + '</div></div></header><div class="app-content">' + content + '</div></main>' + ambientDock() + '</div>';
+  const sidebar = app.querySelector(".sidebar");
+  if (sidebar) sidebar.insertAdjacentHTML("beforeend", '<button class="sidebar-close" data-toggle-nav aria-label="Close navigation">☰</button>');
+  if (state.mobileNav) app.querySelector(".app-layout")?.insertAdjacentHTML("afterbegin", '<button class="nav-scrim" data-toggle-nav aria-label="Close navigation"></button>');
 }
 
 function ambientDock() {
@@ -313,11 +384,17 @@ function completedMinutes() {
   return state.sessions.reduce(function (sum, row) { return sum + Number(row.minutes || 0); }, 0);
 }
 
+function localDayKey(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
+}
+
 function streakDays() {
-  const days = new Set(state.sessions.map(function (s) { return new Date(s.completed_at).toISOString().slice(0,10); }));
+  const days = new Set(state.sessions.map(function (s) { return localDayKey(s.completed_at); }));
   let streak = 0;
   const date = new Date();
-  while (days.has(date.toISOString().slice(0,10))) { streak += 1; date.setUTCDate(date.getUTCDate() - 1); }
+  if (!days.has(localDayKey(date))) date.setDate(date.getDate() - 1);
+  while (days.has(localDayKey(date))) { streak += 1; date.setDate(date.getDate() - 1); }
   return streak;
 }
 
@@ -329,18 +406,19 @@ function renderHome() {
     return '<button class="focus-floor-room" data-join-room="' + esc(room.id) + '"><span class="room-icon">' + esc(room.icon) + '</span><span><strong>' + esc(room.name) + '</strong><small><i></i><b data-room-count="' + esc(room.slug) + '">' + (state.roomCounts[room.slug] || 0) + '</b> connected</small></span><span class="room-arrow">→</span></button>';
   }).join("");
   const content = '<div class="workspace-head"><div><span class="eyebrow">Your study desk</span><h1>What are you finishing today?</h1></div><div class="date-chip">' + new Date().toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) + '</div></div>' +
-    '<section class="card start-session-card"><div class="session-copy"><span class="eyebrow">Start a focus block</span><h2>Set one target. Join when ready.</h2><p>Your intention appears only in this setup and helps you start with a clear finish line.</p></div><form id="quickSessionForm" class="quick-session"><div class="field"><label for="quickIntention">Session intention</label><input id="quickIntention" name="intention" maxlength="100" required placeholder="e.g. Finish chapter 4 notes"></div><div class="field duration-field"><label for="quickDuration">Time</label><select id="quickDuration" name="duration"><option value="25"' + (state.preferences.defaultDuration === 25 ? ' selected' : '') + '>25 min</option><option value="50"' + (state.preferences.defaultDuration === 50 ? ' selected' : '') + '>50 min</option><option value="90"' + (state.preferences.defaultDuration === 90 ? ' selected' : '') + '>90 min</option></select></div><button class="btn btn-primary"' + (leadRoom ? '' : ' disabled') + '>Choose a room</button></form></section>' +
+    '<section class="card start-session-card"><div class="session-copy"><span class="eyebrow">Start a focus block</span><h2>Set one target. Join when ready.</h2><p>Your intention appears only in this setup and helps you start with a clear finish line.</p></div><form id="quickSessionForm" class="quick-session"><div class="field"><label for="quickIntention">Session intention</label><input id="quickIntention" name="intention" maxlength="100" required placeholder="e.g. Finish chapter 4 notes"></div><div class="field duration-field"><label for="quickDuration">Minutes</label><input id="quickDuration" name="duration" type="number" inputmode="numeric" min="1" max="240" step="1" value="' + Number(state.preferences.defaultDuration || 50) + '" required></div><button class="btn btn-primary"' + (leadRoom ? '' : ' disabled') + '>Choose a room</button></form></section>' +
     '<div class="dashboard-layout"><div class="stack"><section class="card focus-floor"><div class="card-title-row"><div><span class="eyebrow">Live focus floor</span><h3>Open rooms</h3></div><button class="btn btn-sm" data-view="rooms">View all</button></div><div class="focus-floor-list">' + (roomStrip || '<div class="empty">Rooms are loading.</div>') + '</div></section><section class="card"><div class="card-title-row"><div><span class="eyebrow">Your plan</span><h3>Today’s goals</h3></div><strong>' + complete + '/' + state.goals.length + '</strong></div><div class="progress"><span style="width:' + progress + '%"></span></div><div style="height:16px"></div>' + goalsList(4) + '<button class="btn btn-sm goals-link" data-view="goals">Manage goals</button></section></div><div class="stack">' + timerCard() + '<section class="card activity-card"><span class="eyebrow">Your momentum</span><div class="mini-stats"><div><strong>' + fmtMinutes(completedMinutes()) + '</strong><span>focused</span></div><div><strong>' + state.sessions.length + '</strong><span>sessions</span></div><div><strong>' + streakDays() + '</strong><span>day streak</span></div></div></section></div></div>';
   appShell(content, "Today");
 }
 
 function timerCard() {
-  return '<aside class="card timer-card"><span class="eyebrow">Focus timer</span><div class="pills" style="justify-content:center;margin-top:18px"><button class="pill ' + (state.timerPreset === 25 ? 'active' : '') + '" data-timer-preset="25">25 min</button><button class="pill ' + (state.timerPreset === 50 ? 'active' : '') + '" data-timer-preset="50">50 min</button><button class="pill ' + (state.timerPreset === 90 ? 'active' : '') + '" data-timer-preset="90">90 min</button></div><div class="timer-display" id="timerDisplay">' + formatTimer() + '</div><p>Stay with one task until the bell.</p><div class="timer-actions"><button class="btn btn-primary" data-timer-toggle>' + (state.timerRunning ? 'Pause' : 'Start') + '</button><button class="btn" data-timer-reset>Reset</button></div></aside>';
+  const custom = ![25, 50, 90].includes(state.timerPreset);
+  return '<aside class="card timer-card"><span class="eyebrow">Focus timer</span><div class="pills timer-presets"><button class="pill ' + (state.timerPreset === 25 ? 'active' : '') + '" data-timer-preset="25">25 min</button><button class="pill ' + (state.timerPreset === 50 ? 'active' : '') + '" data-timer-preset="50">50 min</button><button class="pill ' + (state.timerPreset === 90 ? 'active' : '') + '" data-timer-preset="90">90 min</button><button class="pill ' + (custom ? 'active' : '') + '" data-custom-timer>' + (custom ? state.timerPreset + ' min' : 'Custom') + '</button></div><div class="timer-display" id="timerDisplay">' + formatTimer() + '</div><p>Stay with one task until the bell.</p><div class="timer-actions"><button class="btn btn-primary" data-timer-toggle>' + (state.timerRunning ? 'Pause' : 'Start') + '</button><button class="btn" data-timer-reset>Reset</button></div></aside>';
 }
 
 function renderRooms() {
   const online = Object.values(state.roomCounts).reduce(function (sum, count) { return sum + count; }, 0);
-  appShell('<div class="page-head"><div><span class="eyebrow">Live focus floor</span><h1>Pick your room</h1><p>Choose an atmosphere, set your task, and check your devices before entering.</p></div><span class="online-pill"><i></i>' + online + ' connected</span></div><div class="room-grid">' + roomCards(false) + '</div><div class="room-info-grid"><section class="card"><span class="eyebrow">Before you enter</span><h3>You control what others see and hear</h3><p>The setup screen shows your local preview first. Camera is optional, and you can join muted.</p></section><section class="card"><span class="eyebrow">Community standard</span><h3>Keep the room useful</h3><p>No recording, harassment, disruptive audio, or sharing private information. Leave if anything feels unsafe.</p></section><section class="card"><span class="eyebrow">Your data</span><h3>Calls are not stored here</h3><p>Mellow Commons tracks room presence only after connection. It does not record your Jitsi video or audio.</p></section></div>', "Study rooms");
+  appShell('<div class="page-head"><div><span class="eyebrow">Live focus floor</span><h1>Pick your room</h1><p>Choose an atmosphere, set your task, and check your devices before entering.</p></div><span class="online-pill"><i></i>' + online + ' connected</span></div><div class="room-grid">' + roomCards(false) + '</div><div class="room-info-grid"><section class="card"><span class="eyebrow">Before you enter</span><h3>You control what others see and hear</h3><p>The setup screen shows your local preview first. Camera is optional, and you can join muted.</p></section><section class="card"><span class="eyebrow">Community standard</span><h3>Keep the room useful</h3><p>No recording, harassment, disruptive audio, or sharing private information. Leave if anything feels unsafe.</p></section><section class="card"><span class="eyebrow">Your data</span><h3>Browser-to-browser media</h3><p>Mellow Commons coordinates the connection through Supabase but never records your camera or microphone.</p></section></div>', "Study rooms");
 }
 
 function goalsList(limit) {
@@ -400,10 +478,13 @@ function renderCommunity() {
 }
 
 function renderBuddies() {
+  const studyModeLabel = function (mode) {
+    return ({ quiet:"Quiet body doubling", "check-ins":"Short check-ins", pomodoro:"Pomodoro blocks", discussion:"Discussion friendly", flexible:"Flexible" })[mode] || "Any style";
+  };
   const query = state.buddySearch.toLowerCase();
   const posts = state.buddyPosts.filter(function (post) { return !query || [post.title, post.body, post.subject, post.timezone].join(" ").toLowerCase().includes(query); }).map(function (post) {
     const person = { id:post.author_id, display_name:post.author_display_name || "Student", avatar_path:post.author_avatar_path, avatar_color:post.author_avatar_color };
-    return '<article class="card buddy-post"><div class="buddy-author"><button data-member-profile="' + esc(post.author_id) + '">' + avatarMarkup(person) + '</button><div><strong>' + esc(person.display_name) + '</strong><small>' + esc(post.subject || "Open to studying together") + '</small></div><time>' + new Date(post.created_at).toLocaleDateString() + '</time></div><h3>' + esc(post.title) + '</h3><p>' + esc(post.body) + '</p><div class="buddy-tags"><span>◷ ' + esc(post.timezone || "Flexible") + '</span><span>◎ ' + esc(post.study_mode || "Any style") + '</span></div><div class="actions">' + (post.is_own ? '<button class="btn btn-sm" data-close-buddy="' + esc(post.id) + '">Close post</button>' : '<button class="btn btn-primary btn-sm" data-message-member="' + esc(post.author_id) + '">Message</button><button class="btn btn-sm" data-member-profile="' + esc(post.author_id) + '">View profile</button>') + '</div></article>';
+    return '<article class="card buddy-post"><div class="buddy-author"><button data-member-profile="' + esc(post.author_id) + '">' + avatarMarkup(person) + '</button><div><strong>' + esc(person.display_name) + '</strong><small>' + esc(post.subject || "Open to studying together") + '</small></div><time>' + new Date(post.created_at).toLocaleDateString() + '</time></div><h3>' + esc(post.title) + '</h3><p>' + esc(post.body) + '</p><div class="buddy-tags"><span>◷ ' + esc(post.timezone || "Flexible") + '</span><span>◎ ' + esc(studyModeLabel(post.study_mode)) + '</span></div><div class="actions">' + (post.is_own ? '<button class="btn btn-sm" data-close-buddy="' + esc(post.id) + '">Close post</button>' : '<button class="btn btn-primary btn-sm" data-message-member="' + esc(post.author_id) + '">Message</button><button class="btn btn-sm" data-member-profile="' + esc(post.author_id) + '">View profile</button>') + '</div></article>';
   }).join("");
   appShell('<div class="page-head"><div><span class="eyebrow">Accountability, without pressure</span><h1>Find a study buddy</h1><p>Post what you are studying, your timezone, and the kind of support that would help.</p></div><button class="btn btn-primary" data-new-buddy>Create a post</button></div><div class="buddy-search"><input aria-label="Search buddy posts" placeholder="Search subjects, goals, or timezones" value="' + esc(state.buddySearch) + '" data-buddy-search><span>' + state.buddyPosts.length + ' open posts</span></div><div class="buddy-grid">' + (posts || '<div class="card empty">No matching buddy posts yet. Create the first one.</div>') + '</div>', "Study buddies");
 }
@@ -434,9 +515,13 @@ function renderMemberProfile() {
   const safetyButton = p.is_self ? '' : '<button class="btn icon-btn" data-profile-options="' + esc(p.id) + '" aria-label="Profile safety options">•••</button>';
   const insight = state.memberInsights || {};
   const currentStreak = Number(insight.current_streak || 0);
-  const badgeLevels = [[100,"Commons Legend","✦"],[60,"Quiet Power","◆"],[30,"Deep Roots","❋"],[14,"Steady Glow","☀"],[7,"Cozy Week","☕"],[3,"Soft Start","🌱"],[1,"First Light","◌"]];
-  const earned = badgeLevels.filter(function (badge) { return currentStreak >= badge[0]; });
-  const badges = badgeLevels.slice().reverse().map(function (badge) { return '<div class="achievement ' + (currentStreak >= badge[0] ? 'earned' : '') + '"><span>' + badge[2] + '</span><strong>' + badge[1] + '</strong><small>' + badge[0] + ' day streak</small></div>'; }).join("");
+  const earned = achievementLevels.filter(function (badge) { return currentStreak >= badge[0]; });
+  const badges = achievementLevels.slice().reverse().map(function (badge) {
+    const unlocked = currentStreak >= badge[0];
+    const tag = unlocked ? "button" : "div";
+    return '<' + tag + (unlocked ? ' type="button" data-celebrate-achievement="' + badge[0] + '"' : '') + ' class="achievement ' + (unlocked ? 'earned' : '') + '"><span>' + badge[2] + '</span><strong>' + badge[1] + '</strong><small>' + badge[0] + ' day streak</small></' + tag + '>';
+  }).join("");
+  const featuredBadge = earned[0] ? '<button type="button" class="featured-achievement" data-celebrate-achievement="' + earned[0][0] + '" aria-label="View ' + esc(earned[0][1]) + ' achievement"><b>' + earned[0][2] + '</b><span>' + esc(earned[0][1]) + '</span></button>' : '';
   let tabContent = '<div class="profile-summary-grid"><article><span>Join date</span><strong>' + (joined || "New") + '</strong></article><article><span>Highest badge</span><strong>' + (earned[0] ? earned[0][2] + ' ' + earned[0][1] : "Just beginning") + '</strong></article><article><span>Pin count</span><strong>' + Number(p.pinned_by_count || 0) + '</strong></article></div><section class="profile-about"><span class="eyebrow">About</span><p>' + esc(p.bio || "This student has not added a bio yet.") + '</p></section>';
   if (state.profileTab === "achievements") tabContent = '<div class="achievement-grid">' + badges + '</div>';
   if (state.profileTab === "statistics") {
@@ -444,7 +529,7 @@ function renderMemberProfile() {
     const max = Math.max(1, ...days.map(function (day) { return Number(day.minutes || 0); }));
     tabContent = '<div class="stat-hero"><div><span>Overall focus</span><strong>' + fmtMinutes(insight.total_minutes || 0) + '</strong></div><div><span>Best streak</span><strong>' + Number(insight.best_streak || 0) + ' days</strong></div><div><span>Current streak</span><strong>' + currentStreak + ' days</strong></div></div><div class="week-chart">' + days.map(function (day) { return '<div><span style="height:' + Math.max(5, Math.round(Number(day.minutes || 0) / max * 100)) + '%"></span><small>' + esc(String(day.day || day.date || "").slice(-5)) + '</small></div>'; }).join("") + '</div>';
   }
-  appShell('<button class="back-link" data-profile-back>← Back</button><div class="profile-page-grid"><section class="card public-profile"><div class="profile-cover"><span></span><span></span></div><div class="profile-main"><div class="profile-identity">' + avatarMarkup(p, "profile-avatar") + '<div><span class="eyebrow">Mellow Commons profile</span><h1>' + esc(p.display_name) + '</h1><p>' + esc(p.subject || "Working toward a goal") + (p.country ? ' · ' + esc(p.country) : '') + '</p></div></div><div class="profile-actions">' + pinButton + messageButton + safetyButton + '</div></div><div class="profile-stats"><div><strong>' + Number(p.pinned_by_count || 0) + '</strong><span>Pinned by</span></div><div><strong>' + Number(p.pins_count || 0) + '</strong><span>Profiles pinned</span></div></div></section><section class="profile-details"><nav class="profile-tabs"><button class="' + (state.profileTab === 'summary' ? 'active' : '') + '" data-profile-tab="summary">Summary</button><button class="' + (state.profileTab === 'achievements' ? 'active' : '') + '" data-profile-tab="achievements">Achievements</button><button class="' + (state.profileTab === 'statistics' ? 'active' : '') + '" data-profile-tab="statistics">Statistics</button></nav><div class="card profile-tab-content">' + tabContent + '</div></section></div>', p.display_name);
+  appShell('<button class="back-link" data-profile-back>← Back</button><div class="profile-page-grid"><section class="card public-profile"><div class="profile-cover banner-' + safeBanner(p.profile_banner) + '"><span></span><span></span>' + featuredBadge + '</div><div class="profile-main"><div class="profile-identity">' + avatarMarkup(p, "profile-avatar") + '<div><span class="eyebrow">Mellow Commons profile</span><h1>' + esc(p.display_name) + '</h1><p>' + esc(p.subject || "Working toward a goal") + (p.country ? ' · ' + esc(p.country) : '') + '</p></div></div><div class="profile-actions">' + pinButton + messageButton + safetyButton + '</div></div><div class="profile-stats"><div><strong>' + Number(p.pinned_by_count || 0) + '</strong><span>Pinned by</span></div><div><strong>' + Number(p.pins_count || 0) + '</strong><span>Profiles pinned</span></div></div></section><section class="profile-details"><nav class="profile-tabs"><button class="' + (state.profileTab === 'summary' ? 'active' : '') + '" data-profile-tab="summary">Summary</button><button class="' + (state.profileTab === 'achievements' ? 'active' : '') + '" data-profile-tab="achievements">Achievements</button><button class="' + (state.profileTab === 'statistics' ? 'active' : '') + '" data-profile-tab="statistics">Statistics</button></nav><div class="card profile-tab-content">' + tabContent + '</div></section></div>', p.display_name);
 }
 
 function activeConversation() {
@@ -470,6 +555,25 @@ function privateCallsIncluded() {
   return ["plus", "premium", "buddy"].includes(state.allowance.plan);
 }
 
+function messageReactionMarkup(messageId) {
+  const rows = state.messageReactions[messageId] || [];
+  const groups = {};
+  rows.forEach(function (row) {
+    if (!groups[row.emoji]) groups[row.emoji] = { count:0, mine:false };
+    groups[row.emoji].count += 1;
+    if (row.user_id === state.user.id) groups[row.emoji].mine = true;
+  });
+  return Object.entries(groups).map(function (entry) {
+    return '<button class="message-reaction ' + (entry[1].mine ? 'mine' : '') + '" data-message-reaction="' + esc(messageId) + '" data-emoji="' + esc(entry[0]) + '" aria-label="React ' + esc(entry[0]) + '">' + esc(entry[0]) + '<span>' + entry[1].count + '</span></button>';
+  }).join("");
+}
+
+function messageOptionsMarkup(message, person) {
+  if (state.messageMenuId !== message.id) return "";
+  const emoji = ["♡", "👍", "✦", "😂", "👏"].map(function (item) { return '<button data-message-reaction="' + esc(message.id) + '" data-emoji="' + item + '" aria-label="React ' + item + '">' + item + '</button>'; }).join("");
+  return '<div class="message-options"><div class="message-emoji-row">' + emoji + '</div>' + (message.kind === "text" ? '<button data-copy-message="' + esc(message.id) + '">▣ Copy message</button>' : '') + (message.sender_id !== state.user.id ? '<button data-report-message="' + esc(message.id) + '" data-report-user="' + esc(person.id) + '">△ Report message</button>' : '') + '</div>';
+}
+
 function renderDmMessageEvent(message, person) {
   const mine = message.sender_id === state.user.id;
   let body = '<p>' + esc(message.body) + '</p>';
@@ -479,7 +583,7 @@ function renderDmMessageEvent(message, person) {
   if (message.kind === "voice") body = state.messageMedia[message.id]
     ? '<audio controls preload="metadata" src="' + esc(state.messageMedia[message.id]) + '"></audio>'
     : '<p class="media-loading">Loading voice message…</p>';
-  return '<div class="message-row ' + (mine ? 'mine' : 'theirs') + '"><div class="message-bubble">' + body + '<span>' + new Date(message.created_at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + '</span></div>' + (!mine ? '<button class="message-report" data-report-message="' + esc(message.id) + '" data-report-user="' + esc(person.id) + '" aria-label="Report message">•••</button>' : '') + '</div>';
+  return '<div class="message-row ' + (mine ? 'mine' : 'theirs') + '" data-message-row="' + esc(message.id) + '"><div class="message-stack"><div class="message-bubble">' + body + '<span>' + new Date(message.created_at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + '</span></div><div class="message-reactions">' + messageReactionMarkup(message.id) + '</div></div><button class="message-report" data-message-options="' + esc(message.id) + '" aria-label="Message options" aria-expanded="' + String(state.messageMenuId === message.id) + '">•••</button>' + messageOptionsMarkup(message, person) + '</div>';
 }
 
 function dmCallStatus(call) {
@@ -500,7 +604,7 @@ function renderDmCallEvent(call, person) {
     actions = '<button class="btn btn-primary btn-sm" data-answer-dm-call="' + esc(call.id) + '">Accept</button><button class="btn btn-sm" data-decline-dm-call="' + esc(call.id) + '">Decline</button>';
   } else if (call.status === "ringing" && mine) {
     actions = '<button class="btn btn-sm" data-end-dm-call="' + esc(call.id) + '">Cancel</button>';
-  } else if (call.status === "active" && call.jitsi_room) {
+  } else if (call.status === "active") {
     actions = '<button class="btn btn-primary btn-sm" data-join-dm-call="' + esc(call.id) + '">Join</button><button class="btn btn-sm" data-end-dm-call="' + esc(call.id) + '">End</button>';
   }
   return '<div class="dm-call-event ' + (call.status === "active" || call.status === "ringing" ? 'live' : '') + '"><span class="dm-call-icon">' + icon + '</span><div><strong>' + type + '</strong><p>' + esc(dmCallStatus(call)) + ' · ' + new Date(call.created_at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + '</p></div>' + (actions ? '<div class="dm-call-event-actions">' + actions + '</div>' : '') + '</div>';
@@ -531,7 +635,7 @@ function renderMessages() {
       ? '<div class="message-request"><div><strong>Message request</strong><p>Accept before replying. You can also block or report this member.</p></div><button class="btn btn-primary btn-sm" data-accept-dm="' + esc(active.id) + '">Accept</button></div>'
       : (senderWaiting ? '<div class="message-request waiting"><div><strong>Request sent</strong><p>You can continue after ' + esc(person.display_name) + ' accepts.</p></div></div>' : '');
     const composer = canCompose
-      ? '<form class="dm-composer" id="dmForm"><textarea name="message" maxlength="2000" rows="1" required placeholder="Message ' + esc(person.display_name) + '"></textarea><label class="btn icon-btn" title="Send a photo"><input id="dmMediaInput" type="file" accept="image/jpeg,image/png,image/webp" hidden><span aria-hidden="true">▧</span></label><button class="btn icon-btn record-button ' + (state.voiceRecorder && state.voiceRecorder.state === "recording" ? 'recording' : '') + '" type="button" data-record-voice title="' + (state.voiceRecorder && state.voiceRecorder.state === "recording" ? 'Stop recording' : 'Record a voice message') + '">●</button><button class="btn btn-primary" type="submit">Send</button></form>'
+      ? '<div class="dm-composer-wrap"><div class="composer-emoji-picker"' + (state.messageEmojiOpen ? '' : ' hidden') + '>' + ["😊","📚","✨","☕","💪","🌱","♡","👍"].map(function (emoji) { return '<button type="button" data-insert-emoji="' + emoji + '">' + emoji + '</button>'; }).join("") + '</div><form class="dm-composer" id="dmForm"><textarea name="message" data-message-draft maxlength="2000" rows="1" required placeholder="Message ' + esc(person.display_name) + '">' + esc(state.messageDraft) + '</textarea><button class="btn icon-btn" type="button" data-toggle-message-emoji title="Add emoji">☺</button><label class="btn icon-btn" title="Send a photo"><input id="dmMediaInput" type="file" accept="image/jpeg,image/png,image/webp" hidden><span aria-hidden="true">▧</span></label><button class="btn icon-btn record-button ' + (state.voiceRecorder && state.voiceRecorder.state === "recording" ? 'recording' : '') + '" type="button" data-record-voice title="' + (state.voiceRecorder && state.voiceRecorder.state === "recording" ? 'Stop recording' : 'Record a voice message') + '">●</button><button class="btn btn-primary" type="submit">Send</button></form></div>'
       : '';
     panel = '<section class="message-panel"><header class="message-head"><button class="message-person" data-member-profile="' + esc(person.id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + (active.accepted ? 'Private conversation' : 'Message request') + '</small></span></button><div class="message-head-actions">' + callActions + '<button class="btn icon-btn" data-profile-options="' + esc(person.id) + '" aria-label="Conversation safety options">•••</button></div></header>' + requestBanner + '<div class="message-thread" id="messageThread">' + (timeline || '<div class="thread-start"><span>Start simple</span><p>Say hello and share what you are studying.</p></div>') + '</div>' + composer + '</section>';
   }
@@ -545,9 +649,10 @@ function renderMessages() {
 
 function renderProfile() {
   const p = state.profile;
+  const banners = profileBanners.map(function (banner) { return '<label class="banner-option"><input type="radio" name="profile_banner" value="' + banner[0] + '"' + (safeBanner(p.profile_banner) === banner[0] ? ' checked' : '') + '><span class="banner-swatch banner-' + banner[0] + '"><i></i></span><small>' + banner[1] + '</small></label>'; }).join("");
   const frames = [["none","Simple"],["soft-glow","Soft glow"],["notebook","Notebook"],["mint-ring","Mint ring"],["moonlit","Moonlit ✦"],["garden","Garden ✦"],["aurora","Aurora ✦"]].map(function (frame) { return '<label class="cosmetic-option"><input type="radio" name="profile_frame" value="' + frame[0] + '"' + ((p.profile_frame || "none") === frame[0] ? ' checked' : '') + '><span class="frame-swatch frame-' + frame[0] + '"></span><small>' + frame[1] + '</small></label>'; }).join("");
   const stickers = [["","None"],["moon","☾"],["sprout","🌱"],["sparkles","✦"],["books","📚"],["coffee","☕"],["flower","✿"]].map(function (sticker) { return '<label class="sticker-option"><input type="radio" name="profile_sticker" value="' + sticker[0] + '"' + ((p.profile_sticker || "") === sticker[0] ? ' checked' : '') + '><span>' + (sticker[1] || "None") + '</span></label>'; }).join("");
-  appShell('<div class="page-head"><div><span class="eyebrow">Your public identity</span><h1>Make the space feel like yours</h1><p>Your profile appears when another student clicks your picture or name.</p></div><button class="btn" data-member-profile="' + esc(p.id) + '">Preview profile</button></div><div class="profile-editor"><aside class="card profile-photo-card"><div class="profile-photo-preview">' + avatarMarkup(p, "profile-avatar") + '</div><h3>Profile picture</h3><p>JPG, PNG, or WebP · up to 4 MB. Sexual, explicit, hateful, or unsafe images are not allowed.</p><label class="btn btn-primary" for="avatarUpload">' + (p.avatar_path ? 'Change picture' : 'Upload picture') + '</label><input id="avatarUpload" type="file" accept="image/jpeg,image/png,image/webp" hidden>' + (p.avatar_path ? '<button class="btn btn-sm" data-remove-avatar>Remove picture</button>' : '') + '<span class="safety-copy">Members can report unsafe profile images for review.</span></aside><form class="card form" id="profileForm"><div class="field"><label>Display name</label><input name="display_name" minlength="2" maxlength="40" required value="' + esc(p.display_name) + '"></div><div class="field"><label>What are you studying?</label><input name="subject" maxlength="80" value="' + esc(p.subject) + '" placeholder="Biology, design, coding…"></div><div class="field"><label>Bio</label><textarea name="bio" maxlength="240" placeholder="A short introduction">' + esc(p.bio) + '</textarea></div><div class="field"><label>Country or region</label><input name="country" maxlength="60" value="' + esc(p.country) + '"></div><div class="field"><label>Profile color</label><input name="avatar_color" type="color" value="' + esc(p.avatar_color) + '"></div><div class="field"><label>Profile frame</label><div class="cosmetic-grid">' + frames + '</div><small>✦ frames are included with Premium and Buddy.</small></div><div class="field"><label>Profile sticker</label><div class="sticker-grid">' + stickers + '</div></div><button class="btn btn-primary">Save profile</button></form></div>', "Profile");
+  appShell('<div class="page-head"><div><span class="eyebrow">Your public identity</span><h1>Make the space feel like yours</h1><p>Your profile appears when another student clicks your picture or name.</p></div><button class="btn" data-member-profile="' + esc(p.id) + '">Preview profile</button></div><div class="profile-editor"><aside class="card profile-photo-card"><div class="profile-photo-preview">' + avatarMarkup(p, "profile-avatar") + '</div><h3>Profile picture</h3><p>JPG, PNG, or WebP · up to 4 MB. Sexual, explicit, hateful, or unsafe images are not allowed.</p><label class="btn btn-primary" for="avatarUpload">' + (p.avatar_path ? 'Change picture' : 'Upload picture') + '</label><input id="avatarUpload" type="file" accept="image/jpeg,image/png,image/webp" hidden>' + (p.avatar_path ? '<button class="btn btn-sm" data-remove-avatar>Remove picture</button>' : '') + '<span class="safety-copy">Members can report unsafe profile images for review.</span></aside><form class="card form" id="profileForm"><div class="field"><label>Display name</label><input name="display_name" minlength="2" maxlength="40" required value="' + esc(p.display_name) + '"></div><div class="field"><label>What are you studying?</label><input name="subject" maxlength="80" value="' + esc(p.subject) + '" placeholder="Biology, design, coding…"></div><div class="field"><label>Bio</label><textarea name="bio" maxlength="240" placeholder="A short introduction">' + esc(p.bio) + '</textarea></div><div class="field"><label>Country or region</label><input name="country" maxlength="60" value="' + esc(p.country) + '"></div><div class="field"><label>Profile color</label><input name="avatar_color" type="color" value="' + esc(p.avatar_color) + '"></div><div class="field"><label>Profile banner</label><div class="banner-grid">' + banners + '</div><small>Banners are included for every member.</small></div><div class="field"><label>Profile frame</label><div class="cosmetic-grid">' + frames + '</div><small>✦ frames are included with Premium and Buddy.</small></div><div class="field"><label>Profile sticker</label><div class="sticker-grid">' + stickers + '</div></div><button class="btn btn-primary">Save profile</button></form></div>', "Profile");
 }
 
 function toggleRow(name, title, description, checked) {
@@ -558,13 +663,13 @@ function renderSettings() {
   const p = state.profile;
   const prefs = state.preferences;
   const roomOptions = state.rooms.map(function (room) { return '<option value="' + esc(room.slug) + '"' + (prefs.defaultRoom === room.slug ? ' selected' : '') + '>' + esc(room.name) + '</option>'; }).join("");
-  appShell('<div class="page-head"><div><span class="eyebrow">You stay in control</span><h1>Privacy & settings</h1><p>Video and audio are handled by the call provider and are not stored by Mellow Commons.</p></div></div><section class="card appearance-card"><div><span class="eyebrow">Website ambience</span><h3>Appearance</h3><p>Choose the atmosphere that feels best for your study space.</p></div><div class="theme-choice" role="group" aria-label="Website appearance"><button class="btn ' + (state.theme === "light" ? "active" : "") + '" data-theme="light">☀ Light</button><button class="btn ' + (state.theme === "dark" ? "active" : "") + '" data-theme="dark">☾ Dark</button></div></section><form class="card form" id="privacyForm" style="margin-top:18px">' +
+  appShell('<div class="page-head"><div><span class="eyebrow">You stay in control</span><h1>Privacy & settings</h1><p>Private calls connect browser to browser and are not recorded by Mellow Commons.</p></div></div><section class="card appearance-card"><div><span class="eyebrow">Website ambience</span><h3>Appearance</h3><p>Choose the atmosphere that feels best for your study space.</p></div><div class="theme-choice" role="group" aria-label="Website appearance"><button class="btn ' + (state.theme === "light" ? "active" : "") + '" data-theme="light">☀ Light</button><button class="btn ' + (state.theme === "dark" ? "active" : "") + '" data-theme="dark">☾ Dark</button></div></section><form class="card form" id="privacyForm" style="margin-top:18px">' +
     toggleRow("show_profile", "Public member profile", "Allow signed-in members to see your name, bio, and subject.", p.show_profile) +
     toggleRow("show_country", "Show country", "Display your country or region on your profile.", p.show_country) +
     toggleRow("allow_invites", "Allow private-room invites", "Let other members invite you to private study calls.", p.allow_invites) +
     toggleRow("accepting_dms", "Accept new messages", "Let signed-in members start a private conversation from your profile.", p.accepting_dms) +
     toggleRow("accepting_encouragements", "Receive encouragements", "Allow members to send you supportive messages.", p.accepting_encouragements) +
-    '<button class="btn btn-primary">Save privacy settings</button></form><form class="card form advanced-settings" id="studyPreferencesForm"><div><span class="eyebrow">Session defaults</span><h3>Study preferences</h3><p>These choices are saved in this browser and prefill your room setup.</p></div><div class="settings-grid"><div class="field"><label>Default focus block</label><select name="defaultDuration"><option value="25"' + (prefs.defaultDuration === 25 ? ' selected' : '') + '>25 minutes</option><option value="50"' + (prefs.defaultDuration === 50 ? ' selected' : '') + '>50 minutes</option><option value="90"' + (prefs.defaultDuration === 90 ? ' selected' : '') + '>90 minutes</option></select></div><div class="field"><label>Quick-start room</label><select name="defaultRoom">' + roomOptions + '</select></div></div>' + toggleRow("defaultCamera", "Camera ready by default", "Keep camera selected when opening the device lobby. You still approve browser access.", prefs.defaultCamera) + toggleRow("defaultMicrophone", "Microphone ready by default", "Keep microphone selected in the device lobby. Public rooms should usually stay muted.", prefs.defaultMicrophone) + toggleRow("soundCues", "Timer sound cues", "Allow a short sound when a focus block finishes.", prefs.soundCues) + toggleRow("compactMode", "Compact dashboard", "Fit more study information on screen with tighter spacing.", prefs.compactMode) + '<button class="btn btn-primary">Save study preferences</button></form><section class="card" style="margin-top:18px"><h3>Account</h3><p>Signed in as ' + esc(state.user.email) + '</p><button class="btn btn-danger" data-signout>Sign out</button> <button class="btn" data-privacy>Read privacy summary</button></section>', "Privacy & settings");
+    '<button class="btn btn-primary">Save privacy settings</button></form><form class="card form advanced-settings" id="studyPreferencesForm"><div><span class="eyebrow">Session defaults</span><h3>Study preferences</h3><p>These choices are saved in this browser and prefill your room setup.</p></div><div class="settings-grid"><div class="field"><label>Default focus block (minutes)</label><input name="defaultDuration" type="number" inputmode="numeric" min="1" max="240" step="1" value="' + Number(prefs.defaultDuration || 50) + '" required></div><div class="field"><label>Quick-start room</label><select name="defaultRoom">' + roomOptions + '</select></div></div>' + toggleRow("defaultCamera", "Camera ready by default", "Keep camera selected when opening the device lobby. You still approve browser access.", prefs.defaultCamera) + toggleRow("defaultMicrophone", "Microphone ready by default", "Keep microphone selected in the device lobby. Public rooms should usually stay muted.", prefs.defaultMicrophone) + toggleRow("soundCues", "Timer sound cues", "Allow a short sound when a focus block finishes.", prefs.soundCues) + toggleRow("compactMode", "Compact dashboard", "Fit more study information on screen with tighter spacing.", prefs.compactMode) + '<button class="btn btn-primary">Save study preferences</button></form><section class="card" style="margin-top:18px"><h3>Account</h3><p>Signed in as ' + esc(state.user.email) + '</p><button class="btn btn-danger" data-signout>Sign out</button> <button class="btn" data-privacy>Read privacy summary</button></section>', "Privacy & settings");
 }
 
 function adminPlanOptions(selected) {
@@ -643,9 +748,11 @@ function subscribeRoomCounts() {
     const channel = supabase.channel("presence:" + room.slug, { config: { presence: { key: "observer-" + crypto.randomUUID() } } });
     channel.on("presence", { event: "sync" }, function () {
       const presence = channel.presenceState();
-      state.roomCounts[room.slug] = Object.values(presence).reduce(function (sum, entries) {
-        return sum + entries.filter(function (entry) { return entry && entry.user_id; }).length;
-      }, 0);
+      const connectedUsers = new Set();
+      Object.values(presence).forEach(function (entries) {
+        entries.forEach(function (entry) { if (entry && entry.user_id) connectedUsers.add(entry.user_id); });
+      });
+      state.roomCounts[room.slug] = connectedUsers.size;
       const countEls = document.querySelectorAll('[data-room-count="' + room.slug + '"]');
       countEls.forEach(function (el) { el.textContent = state.roomCounts[room.slug]; });
     }).subscribe();
@@ -745,7 +852,7 @@ async function voteFeedback(postId) {
 }
 
 function showBuddyComposer() {
-  showModal("Find a study buddy", '<form class="form" id="buddyForm"><div class="field"><label>Post title</label><input name="title" minlength="4" maxlength="100" required placeholder="Looking for an evening revision buddy"></div><div class="field"><label>What are you working on?</label><input name="subject" maxlength="80" placeholder="Calculus, IELTS, portfolio…"></div><div class="field"><label>About your goal</label><textarea name="body" minlength="12" maxlength="1200" required placeholder="Share your schedule, goal, and the kind of accountability you want."></textarea></div><div class="settings-grid"><div class="field"><label>Timezone</label><input name="timezone" maxlength="60" value="' + esc(Intl.DateTimeFormat().resolvedOptions().timeZone || "") + '"></div><div class="field"><label>Study style</label><select name="study_mode"><option value="Quiet body doubling">Quiet body doubling</option><option value="Check-ins">Short check-ins</option><option value="Pomodoro">Pomodoro blocks</option><option value="Flexible">Flexible</option></select></div></div><button class="btn btn-primary">Publish post</button></form>');
+  showModal("Find a study buddy", '<form class="form" id="buddyForm"><div class="field"><label>Post title</label><input name="title" minlength="4" maxlength="100" required placeholder="Looking for an evening revision buddy"></div><div class="field"><label>What are you working on?</label><input name="subject" maxlength="80" placeholder="Calculus, IELTS, portfolio…"></div><div class="field"><label>About your goal</label><textarea name="body" minlength="10" maxlength="1200" required placeholder="Share your schedule, goal, and the kind of accountability you want."></textarea></div><div class="settings-grid"><div class="field"><label>Timezone</label><input name="timezone" maxlength="60" value="' + esc(Intl.DateTimeFormat().resolvedOptions().timeZone || "") + '"></div><div class="field"><label>Study style</label><select name="study_mode"><option value="quiet">Quiet body doubling</option><option value="check-ins">Short check-ins</option><option value="pomodoro">Pomodoro blocks</option><option value="discussion">Discussion friendly</option><option value="flexible">Flexible</option></select></div></div><button class="btn btn-primary">Publish post</button></form>');
 }
 
 async function submitBuddy(form) {
@@ -855,12 +962,14 @@ async function startConversation(userId) {
   if (result.error) return showToast(result.error.message, true);
   await loadConversations();
   state.activeConversationId = result.data;
+  state.messageDraft = "";
   state.view = "messages";
   await Promise.all([loadMessages(result.data), loadDmCalls(result.data)]);
   renderMessages();
 }
 
 async function openConversation(conversationId) {
+  if (state.activeConversationId !== conversationId) state.messageDraft = "";
   state.activeConversationId = conversationId;
   state.view = "messages";
   await Promise.all([loadMessages(conversationId), loadDmCalls(conversationId)]);
@@ -868,7 +977,7 @@ async function openConversation(conversationId) {
 }
 
 async function loadMessages(conversationId) {
-  if (!conversationId) { state.messages = []; state.messageMedia = {}; return; }
+  if (!conversationId) { state.messages = []; state.messageMedia = {}; state.messageReactions = {}; return; }
   const result = await supabase.from("dm_messages").select("*").eq("conversation_id", conversationId).order("created_at", { ascending:true }).limit(300);
   if (result.error) return showToast(result.error.message, true);
   state.messages = result.data || [];
@@ -878,7 +987,44 @@ async function loadMessages(conversationId) {
     const signed = await supabase.storage.from("dm-media").createSignedUrl(message.storage_path, 3600);
     if (!signed.error && signed.data) state.messageMedia[message.id] = signed.data.signedUrl;
   }));
+  await loadMessageReactions();
   subscribeToDm(conversationId);
+}
+
+async function loadMessageReactions() {
+  const ids = state.messages.map(function (message) { return message.id; });
+  state.messageReactions = {};
+  if (!ids.length) return;
+  const result = await supabase.from("dm_message_reactions").select("message_id,user_id,emoji,created_at").in("message_id", ids);
+  if (result.error) return;
+  (result.data || []).forEach(function (row) {
+    if (!state.messageReactions[row.message_id]) state.messageReactions[row.message_id] = [];
+    state.messageReactions[row.message_id].push(row);
+  });
+}
+
+async function toggleMessageReaction(messageId, emoji) {
+  const allowed = ["♡", "👍", "✦", "😂", "👏"];
+  if (!allowed.includes(emoji)) return;
+  const rows = state.messageReactions[messageId] || [];
+  const mine = rows.some(function (row) { return row.user_id === state.user.id && row.emoji === emoji; });
+  const query = mine
+    ? supabase.from("dm_message_reactions").delete().eq("message_id", messageId).eq("user_id", state.user.id).eq("emoji", emoji)
+    : supabase.from("dm_message_reactions").insert({ message_id:messageId, user_id:state.user.id, emoji:emoji });
+  const result = await query;
+  if (result.error) return showToast("That reaction could not be saved.", true);
+  state.messageMenuId = null;
+  await loadMessageReactions();
+  renderMessages();
+}
+
+async function copyDmMessage(messageId) {
+  const message = state.messages.find(function (item) { return item.id === messageId; });
+  if (!message || message.kind !== "text") return;
+  await navigator.clipboard.writeText(message.body || "");
+  state.messageMenuId = null;
+  showToast("Message copied.");
+  renderMessages();
 }
 
 function subscribeToDm(conversationId) {
@@ -887,6 +1033,12 @@ function subscribeToDm(conversationId) {
     .on("postgres_changes", { event:"INSERT", schema:"public", table:"dm_messages", filter:"conversation_id=eq." + conversationId }, async function () {
       await loadMessages(conversationId);
       await loadConversations();
+      if (state.view === "messages") renderMessages();
+    })
+    .on("postgres_changes", { event:"*", schema:"public", table:"dm_message_reactions" }, async function (payload) {
+      const row = payload.new && payload.new.message_id ? payload.new : payload.old;
+      if (!row || !state.messages.some(function (message) { return message.id === row.message_id; })) return;
+      await loadMessageReactions();
       if (state.view === "messages") renderMessages();
     })
     .subscribe();
@@ -927,7 +1079,7 @@ function notifyNextIncomingCall() {
   }
   const person = incomingCallPerson(call);
   state.notifiedDmCalls.add(call.id);
-  showModal("Incoming " + (call.call_mode === "audio" ? "audio" : "video") + " call", '<div class="incoming-call"><div class="incoming-call-avatar">' + avatarMarkup(person, "profile-avatar") + '</div><h2>' + esc(person.display_name) + '</h2><p>is calling you privately on Mellow Commons</p><div class="incoming-call-actions"><button class="btn" data-decline-dm-call="' + esc(call.id) + '">Decline</button><button class="btn btn-primary" data-answer-dm-call="' + esc(call.id) + '">Accept</button></div></div>');
+  modalRoot.innerHTML = '<div class="social-incoming" role="dialog" aria-modal="true"><div class="social-incoming-glow"></div><div class="social-incoming-card"><span class="call-kicker">Incoming ' + (call.call_mode === "audio" ? "audio" : "video") + ' call</span><div class="incoming-call-avatar">' + avatarMarkup(person, "profile-avatar") + '</div><h2>' + esc(person.display_name) + '</h2><p>Mellow Commons private call</p><div class="incoming-social-actions"><button class="social-answer decline" data-decline-dm-call="' + esc(call.id) + '"><span>×</span><small>Decline</small></button><button class="social-answer accept" data-answer-dm-call="' + esc(call.id) + '"><span>' + (call.call_mode === "audio" ? "☎" : "▣") + '</span><small>Answer</small></button></div></div></div>';
 }
 
 function subscribeToDmCalls() {
@@ -939,11 +1091,16 @@ function subscribeToDmCalls() {
       await Promise.all([loadConversations(), loadPendingDmCalls()]);
       if (state.activeConversationId && changed && changed.conversation_id === state.activeConversationId) {
         await loadDmCalls(state.activeConversationId);
-        if (state.view === "messages" && !document.querySelector(".meeting-page")) renderMessages();
+        if (state.view === "messages" && !document.querySelector(".meeting-page, .social-call-page")) renderMessages();
       }
       if (changed && changed.id === state.activeDmCallId && ["declined", "cancelled", "missed", "ended"].includes(changed.status)) {
+        const statusText = { declined:"Call declined", cancelled:"Call cancelled", missed:"Call missed", ended:"Call ended" }[changed.status];
+        setSocialCallStatus(statusText);
         await leaveMeeting(false);
-        showToast("The private call ended.");
+        showToast(statusText + ".");
+      }
+      if (changed && changed.id === state.activeDmCallId && changed.status === "active") {
+        setSocialCallStatus("Connecting…");
       }
       notifyNextIncomingCall();
     })
@@ -965,12 +1122,11 @@ function dmCallRoom(call, person) {
     title:(call.call_mode === "audio" ? "Audio call with " : "Video call with ") + (person && person.display_name || "study partner"),
     description:"A private one-to-one Mellow Commons call.",
     call_mode:call.call_mode,
-    jitsi_room:call.jitsi_room,
     dm_call_id:call.id
   };
 }
 
-function startDmCallSetup(mode) {
+async function startDmCallSetup(mode) {
   const active = activeConversation();
   if (!active || !active.accepted) return showToast("Accept the message request before calling.", true);
   if (!privateCallsIncluded()) {
@@ -979,13 +1135,8 @@ function startDmCallSetup(mode) {
     return showToast("Private audio and video calls are included with Premium and Buddy.");
   }
   const person = conversationPerson(active);
-  state.pendingDmStart = { conversationId:active.id, mode:mode, person:person };
-  showJoinLobby({
-    id:"dm-call-setup",
-    title:(mode === "audio" ? "Audio call with " : "Video call with ") + person.display_name,
-    call_mode:mode,
-    description:"Check your devices, then start the private call."
-  }, true);
+  const room = await createDmCall({ conversationId:active.id, mode:mode, person:person });
+  if (room) await mountSocialCall(room, person, true);
 }
 
 async function createDmCall(start) {
@@ -1021,21 +1172,22 @@ async function answerDmCall(callId, shouldAccept) {
     return showToast("Call declined.");
   }
   const call = result.data && result.data[0];
-  if (!call || !call.jitsi_room) return showToast("The call room is unavailable.", true);
+  if (!call) return showToast("The call room is unavailable.", true);
   await loadConversations();
   state.activeConversationId = call.conversation_id;
   state.view = "messages";
   await Promise.all([loadMessages(call.conversation_id), loadDmCalls(call.conversation_id)]);
   renderMessages();
   const person = incomingCallPerson(pending || call);
-  showJoinLobby(dmCallRoom(call, person), true);
+  await mountSocialCall(dmCallRoom(call, person), person, false);
 }
 
 async function joinDmCall(callId) {
   const call = state.dmCalls.find(function (item) { return item.id === callId; });
   const active = activeConversation();
-  if (!call || call.status !== "active" || !call.jitsi_room) return showToast("This call is no longer available.", true);
-  showJoinLobby(dmCallRoom(call, active && conversationPerson(active)), true);
+  if (!call || call.status !== "active") return showToast("This call is no longer available.", true);
+  const person = active && conversationPerson(active);
+  await mountSocialCall(dmCallRoom(call, person), person, false);
 }
 
 async function endDmCall(callId) {
@@ -1068,6 +1220,7 @@ async function submitDm(form) {
   button.disabled = false;
   if (result.error) return showToast(result.error.message, true);
   form.reset();
+  state.messageDraft = "";
   await loadMessages(active.id);
   await loadConversations();
   renderMessages();
@@ -1286,8 +1439,14 @@ async function deleteGoal(id) {
 }
 
 function setTimerPreset(minutes) {
-  state.timerPreset = minutes; state.timerSeconds = minutes * 60; state.timerRunning = false;
+  const safeMinutes = Math.min(240, Math.max(1, Math.round(Number(minutes) || 25)));
+  state.timerPreset = safeMinutes; state.timerSeconds = safeMinutes * 60; state.timerRunning = false;
   clearInterval(state.timerId); renderApp();
+}
+
+function showCustomTimer() {
+  showModal("Custom focus timer", '<form id="customTimerForm" class="form"><div class="custom-timer-hero"><span>◷</span><div><h3>Choose your own focus block</h3><p>Set anything from 1 minute to 4 hours.</p></div></div><div class="field"><label for="customTimerMinutes">Minutes</label><input id="customTimerMinutes" name="minutes" type="number" inputmode="numeric" min="1" max="240" step="1" required value="' + state.timerPreset + '"></div><button class="btn btn-primary">Use this duration</button></form>');
+  requestAnimationFrame(function () { document.querySelector("#customTimerMinutes")?.select(); });
 }
 
 function toggleTimer() {
@@ -1352,11 +1511,28 @@ function deviceErrorMessage(error) {
   return "The device check could not start. Check browser permissions and try again.";
 }
 
+function watchLocalTrack(track) {
+  if (!track) return;
+  track.onended = async function () {
+    if (!state.localCallStream || !state.localCallStream.getTracks().includes(track)) return;
+    const label = track.kind === "video" ? "Camera" : "Microphone";
+    showToast(label + " disconnected. Choose another device to continue.", true);
+    if (state.rtcSession) await state.rtcSession.updatePresence(track.kind === "video" ? { camera:false } : { microphone:false });
+    if (document.querySelector(".study-stream")) renderRoomGrid();
+    if (document.querySelector(".social-call-page") && track.kind === "video") document.querySelector(".local-call-card")?.classList.add("camera-off");
+  };
+}
+
+function watchLocalStream(stream) {
+  if (stream) stream.getTracks().forEach(watchLocalTrack);
+  return stream;
+}
+
 function showJoinLobby(room, isPrivate) {
   state.pendingRoom = room;
   state.pendingPrivate = Boolean(isPrivate);
   const draft = state.joinDraft;
-  showModal("Set up your session", '<form id="joinLobbyForm" class="join-lobby"><div class="lobby-grid"><div class="device-panel"><div class="video-preview-wrap"><video id="devicePreview" autoplay muted playsinline></video><div class="video-placeholder" id="videoPlaceholder"><span>◉</span><strong>Preview is off</strong><small>Nothing is shared until you join</small></div><div class="mic-meter" aria-label="Microphone level"><i id="micLevel"></i></div></div><button class="btn device-check-btn" type="button" data-check-devices>Test camera & microphone</button><p class="device-status" id="deviceStatus">You can also join with both off.</p></div><div class="lobby-options"><span class="eyebrow">' + (isPrivate ? 'Private room' : 'Public focus room') + '</span><h3>' + esc(room.name || room.title) + '</h3><p>' + esc(room.description || (room.call_mode === "audio" ? "Invite-only audio study call." : "Invite-only video study call.")) + '</p><div class="field"><label for="sessionIntention">What will you finish?</label><input id="sessionIntention" name="intention" maxlength="100" value="' + esc(draft.intention) + '" placeholder="One clear task"></div><div class="field"><label for="sessionDuration">Focus block</label><select id="sessionDuration" name="duration"><option value="25"' + (draft.duration === 25 ? ' selected' : '') + '>25 minutes</option><option value="50"' + (draft.duration === 50 ? ' selected' : '') + '>50 minutes</option><option value="90"' + (draft.duration === 90 ? ' selected' : '') + '>90 minutes</option></select></div><div class="device-switches"><label><input type="checkbox" name="camera" data-media-toggle="camera"' + (draft.camera ? ' checked' : '') + '><span>Camera</span><small id="cameraState">' + (draft.camera ? 'On' : 'Off') + '</small></label><label><input type="checkbox" name="microphone" data-media-toggle="microphone"' + (draft.microphone ? ' checked' : '') + '><span>Microphone</span><small id="microphoneState">' + (draft.microphone ? 'On' : 'Off') + '</small></label></div><div class="device-selects" id="deviceSelects"><div class="field"><label>Camera</label><select name="cameraDevice" disabled><option>Run device test first</option></select></div><div class="field"><label>Microphone</label><select name="microphoneDevice" disabled><option>Run device test first</option></select></div></div></div></div><div class="lobby-footer"><p><strong>Privacy:</strong> your preview stays on this device. Mellow Commons does not record calls.</p><div><button type="button" class="btn" data-close-modal>Cancel</button> <button class="btn btn-primary" type="submit">Join room →</button></div></div></form>', true);
+  showModal("Set up your session", '<form id="joinLobbyForm" class="join-lobby"><div class="lobby-grid"><div class="device-panel"><div class="video-preview-wrap"><video id="devicePreview" autoplay muted playsinline></video><div class="video-placeholder" id="videoPlaceholder"><span>◉</span><strong>Preview is off</strong><small>Nothing is shared until you join</small></div><div class="mic-meter" aria-label="Microphone level"><i id="micLevel"></i></div></div><button class="btn device-check-btn" type="button" data-check-devices>Test camera & microphone</button><p class="device-status" id="deviceStatus">You can also join with both off.</p></div><div class="lobby-options"><span class="eyebrow">' + (isPrivate ? 'Private room' : 'Public focus room') + '</span><h3>' + esc(room.name || room.title) + '</h3><p>' + esc(room.description || (room.call_mode === "audio" ? "Invite-only audio study call." : "Invite-only video study call.")) + '</p><div class="field"><label for="sessionIntention">What will you finish?</label><input id="sessionIntention" name="intention" maxlength="100" value="' + esc(draft.intention) + '" placeholder="One clear task"></div><div class="field"><label for="sessionDuration">Focus block (minutes)</label><input id="sessionDuration" name="duration" type="number" inputmode="numeric" min="1" max="240" step="1" required value="' + Math.min(240, Math.max(1, Number(draft.duration || 50))) + '"><small>Choose any duration from 1 to 240 minutes.</small></div><div class="device-switches"><label><input type="checkbox" name="camera" data-media-toggle="camera"' + (draft.camera ? ' checked' : '') + '><span>Camera</span><small id="cameraState">' + (draft.camera ? 'On' : 'Off') + '</small></label><label><input type="checkbox" name="microphone" data-media-toggle="microphone"' + (draft.microphone ? ' checked' : '') + '><span>Microphone</span><small id="microphoneState">' + (draft.microphone ? 'On' : 'Off') + '</small></label></div><div class="device-selects" id="deviceSelects"><div class="field"><label>Camera</label><select name="cameraDevice" disabled><option>Run device test first</option></select></div><div class="field"><label>Microphone</label><select name="microphoneDevice" disabled><option>Run device test first</option></select></div></div></div></div><div class="lobby-footer"><p><strong>Privacy:</strong> your preview stays on this device. Mellow Commons does not record calls.</p><div><button type="button" class="btn" data-close-modal>Cancel</button> <button class="btn btn-primary" type="submit">Join room →</button></div></div></form>', true);
 }
 
 async function populateDeviceSelectors() {
@@ -1370,8 +1546,8 @@ async function populateDeviceSelectors() {
   micSelect.innerHTML = microphones.map(function (device, index) { return '<option value="' + esc(device.deviceId) + '">' + esc(device.label || "Microphone " + (index + 1)) + '</option>'; }).join("") || '<option value="">No microphone found</option>';
   cameraSelect.disabled = !cameras.length;
   micSelect.disabled = !microphones.length;
-  if (state.joinDraft.cameraId) cameraSelect.value = state.joinDraft.cameraId;
-  if (state.joinDraft.microphoneId) micSelect.value = state.joinDraft.microphoneId;
+  if (state.joinDraft.cameraDeviceId) cameraSelect.value = state.joinDraft.cameraDeviceId;
+  if (state.joinDraft.microphoneDeviceId) micSelect.value = state.joinDraft.microphoneDeviceId;
 }
 
 function startMicMeter(stream) {
@@ -1412,13 +1588,23 @@ async function checkDevices() {
   stopDevicePreview();
   try {
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new DOMException("Media unavailable", "SecurityError");
-    const stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
+    const stream = new MediaStream();
+    const failures = [];
+    try {
+      const camera = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+      camera.getVideoTracks().forEach(function (track) { stream.addTrack(track); });
+    } catch (error) { failures.push({ kind:"Camera", error:error }); }
+    try {
+      const microphone = await navigator.mediaDevices.getUserMedia({ video:false, audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
+      microphone.getAudioTracks().forEach(function (track) { stream.addTrack(track); });
+    } catch (error) { failures.push({ kind:"Microphone", error:error }); }
+    if (!stream.getTracks().length) throw failures[0]?.error || new DOMException("No media devices", "NotFoundError");
     state.previewStream = stream;
     const video = document.querySelector("#devicePreview");
     if (video) { video.srcObject = stream; await video.play().catch(function () {}); }
-    document.querySelector("#videoPlaceholder")?.classList.add("hidden");
     state.joinDraft.camera = Boolean(stream.getVideoTracks().length);
     state.joinDraft.microphone = Boolean(stream.getAudioTracks().length);
+    document.querySelector("#videoPlaceholder")?.classList.toggle("hidden", state.joinDraft.camera);
     const cameraToggle = document.querySelector('[name="camera"]');
     const micToggle = document.querySelector('[name="microphone"]');
     if (cameraToggle) cameraToggle.checked = state.joinDraft.camera;
@@ -1427,9 +1613,15 @@ async function checkDevices() {
     const microphoneState = document.querySelector("#microphoneState");
     if (cameraState) cameraState.textContent = state.joinDraft.camera ? "On" : "Unavailable";
     if (microphoneState) microphoneState.textContent = state.joinDraft.microphone ? "On" : "Unavailable";
-    await populateDeviceSelectors();
+    try { await populateDeviceSelectors(); }
+    catch (error) { failures.push({ kind:"Device list", error:error }); }
     startMicMeter(stream);
-    if (status) { status.textContent = "Devices are working. Choose what to keep on when you enter."; status.classList.remove("error"); }
+    if (status) {
+      status.textContent = failures.length
+        ? failures.map(function (item) { return item.kind + " unavailable"; }).join(" · ") + ". You can still join with the working device or both off."
+        : "Devices are working. Choose what to keep on when you enter.";
+      status.classList.toggle("error", failures.length > 0);
+    }
     if (button) button.textContent = "Test again";
   } catch (error) {
     if (status) { status.textContent = deviceErrorMessage(error); status.classList.add("error"); }
@@ -1445,20 +1637,6 @@ function togglePreviewTrack(kind, enabled) {
   const label = document.querySelector(kind === "camera" ? "#cameraState" : "#microphoneState");
   if (label) label.textContent = enabled ? (tracks.length ? "On" : "Enable in call") : "Off";
   if (kind === "camera") document.querySelector("#videoPlaceholder")?.classList.toggle("hidden", enabled && tracks.length > 0);
-}
-
-async function ensureJitsi() {
-  if (typeof window.JitsiMeetExternalAPI === "function") return true;
-  return new Promise(function (resolve) {
-    const script = document.createElement("script");
-    const finish = function () { resolve(typeof window.JitsiMeetExternalAPI === "function"); };
-    script.src = "https://meet.jit.si/external_api.js?v=focusroom";
-    script.async = true;
-    script.onload = finish;
-    script.onerror = function () { resolve(false); };
-    document.head.appendChild(script);
-    setTimeout(finish, 8000);
-  });
 }
 
 async function beginFocusVisit(room, isPrivate) {
@@ -1507,71 +1685,545 @@ async function endFocusVisit() {
 function showMeetingDecorations() {
   const frames = [["none","None"],["soft-glow","Soft glow"],["notebook","Notebook"],["mint-ring","Mint ring"],["moonlit","Moonlit"],["garden","Garden"],["aurora","Aurora"]].map(function (frame) { return '<label class="cosmetic-option"><input type="radio" name="frame" value="' + frame[0] + '"' + (state.meetingFrame === frame[0] ? ' checked' : '') + '><span class="frame-swatch frame-' + frame[0] + '"></span><small>' + frame[1] + '</small></label>'; }).join("");
   const stickers = [["","None"],["moon","☾"],["sprout","🌱"],["sparkles","✦"],["books","📚"],["coffee","☕"],["flower","✿"]].map(function (sticker) { return '<label class="sticker-option"><input type="radio" name="sticker" value="' + sticker[0] + '"' + (state.meetingSticker === sticker[0] ? ' checked' : '') + '><span>' + sticker[1] + '</span></label>'; }).join("");
-  showModal("Room decorations", '<form id="meetingDecorForm" class="form"><p>Choose a cozy border and corner sticker for your own study-room screen. This decoration does not alter the video you send.</p><div class="field"><label>Frame</label><div class="cosmetic-grid">' + frames + '</div></div><div class="field"><label>Sticker</label><div class="sticker-grid">' + stickers + '</div></div><button class="btn btn-primary">Apply decoration</button></form>');
+  const effects = [["natural","Natural"],["warm","Warm"],["moonlight","Moonlight"],["mono","Mono"],["dreamy","Dreamy"]].map(function (effect) { return '<label class="effect-option effect-' + effect[0] + '"><input type="radio" name="effect" value="' + effect[0] + '"' + (state.roomEffect === effect[0] ? ' checked' : '') + '><span></span><small>' + effect[1] + '</small></label>'; }).join("");
+  showModal("Stream effects", '<form id="meetingDecorForm" class="form"><p>Style the study-stream interface around your video. These effects never alter the camera track sent to other students.</p><div class="field"><label>Video mood</label><div class="effect-grid">' + effects + '</div></div><div class="settings-grid"><div class="field"><label>Video quality</label><select name="quality"><option value="data"' + (state.roomQuality === "data" ? ' selected' : '') + '>Data saver · 360p</option><option value="balanced"' + (state.roomQuality === "balanced" ? ' selected' : '') + '>Balanced · 720p</option><option value="hd"' + (state.roomQuality === "hd" ? ' selected' : '') + '>High definition · 1080p</option></select></div><label class="check-option"><input type="checkbox" name="mirror"' + (state.roomMirror ? ' checked' : '') + '><span>Mirror my preview</span></label></div><div class="field"><label>Room frame</label><div class="cosmetic-grid">' + frames + '</div></div><div class="field"><label>Corner sticker</label><div class="sticker-grid">' + stickers + '</div></div><button class="btn btn-primary">Apply effects</button></form>', true);
 }
 
 function saveMeetingDecorations(form) {
   const data = new FormData(form);
   state.meetingFrame = String(data.get("frame") || "none");
   state.meetingSticker = String(data.get("sticker") || "");
+  state.roomEffect = String(data.get("effect") || "natural");
+  state.roomQuality = String(data.get("quality") || "balanced");
+  state.roomMirror = data.has("mirror");
   localStorage.setItem("mellow-meeting-frame", state.meetingFrame);
   localStorage.setItem("mellow-meeting-sticker", state.meetingSticker);
+  localStorage.setItem("mellow-room-effect", state.roomEffect);
+  localStorage.setItem("mellow-room-quality", state.roomQuality);
+  localStorage.setItem("mellow-room-mirror", String(state.roomMirror));
   const page = document.querySelector(".meeting-page");
-  if (page) page.dataset.frame = state.meetingFrame;
+  if (page) { page.dataset.frame = state.meetingFrame; page.dataset.mirror = String(state.roomMirror); }
   const sticker = document.querySelector("#meetingSticker");
   if (sticker) sticker.textContent = stickerGlyph(state.meetingSticker);
-  closeModal(); showToast("Room decoration applied.");
+  if (state.rtcSession && document.querySelector(".study-stream")) {
+    state.rtcSession.updatePresence({ effect:state.roomEffect });
+    renderRoomGrid();
+  }
+  closeModal(); showToast("Stream effects applied.");
+}
+
+function setSocialCallStatus(message) {
+  const status = document.querySelector("#socialCallStatus");
+  if (status) status.textContent = message;
+}
+
+function formatCallDuration(seconds) {
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
+  return minutes + ":" + (seconds % 60).toString().padStart(2, "0");
+}
+
+function startSocialCallTimer() {
+  if (!state.socialCallStartedAt) state.socialCallStartedAt = Date.now();
+  clearInterval(state.socialCallTimerId);
+  const update = function () {
+    const timer = document.querySelector("#socialCallTimer");
+    if (timer) timer.textContent = formatCallDuration(Math.floor((Date.now() - state.socialCallStartedAt) / 1000));
+  };
+  update();
+  state.socialCallTimerId = setInterval(update, 1000);
+}
+
+function updateSocialControl(kind, muted) {
+  const button = document.querySelector(kind === "audio" ? "#socialMicButton" : "#socialVideoButton");
+  if (!button) return;
+  button.classList.toggle("off", muted);
+  button.setAttribute("aria-pressed", String(muted));
+  const label = button.querySelector("small");
+  if (label) label.textContent = kind === "audio" ? (muted ? "Unmute" : "Mute") : (muted ? "Camera on" : "Camera off");
+  const icon = button.querySelector("span");
+  if (icon) icon.textContent = kind === "audio" ? (muted ? "⌁" : "●") : (muted ? "▢" : "▣");
+}
+
+async function runSocialCallCommand(command) {
+  if (!state.localCallStream) return;
+  if (command === "toggleAudio") {
+    const tracks = state.localCallStream.getAudioTracks();
+    if (!tracks.length) return showToast("No microphone is available on this device.", true);
+    state.socialMicMuted = !state.socialMicMuted;
+    tracks.forEach(function (track) { track.enabled = !state.socialMicMuted; });
+    await state.rtcSession?.updatePresence({ microphone:!state.socialMicMuted });
+    updateSocialControl("audio", state.socialMicMuted);
+  }
+  if (command === "toggleVideo") {
+    const tracks = state.localCallStream.getVideoTracks();
+    if (!tracks.length) return showToast("Camera access is off. Check your browser permissions to turn it on.", true);
+    state.socialVideoMuted = !state.socialVideoMuted;
+    tracks.forEach(function (track) { track.enabled = !state.socialVideoMuted; });
+    await state.rtcSession?.updatePresence({ camera:!state.socialVideoMuted });
+    updateSocialControl("video", state.socialVideoMuted);
+    document.querySelector(".local-call-card")?.classList.toggle("camera-off", state.socialVideoMuted);
+  }
+  if (command === "upgradeVideo") {
+    try {
+      const camera = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:"user" }, width:{ ideal:1280 }, height:{ ideal:720 } }, audio:false });
+      const cameraTrack = camera.getVideoTracks()[0];
+      watchLocalTrack(cameraTrack);
+      await state.rtcSession.replaceTrack("video", cameraTrack);
+      state.socialVideoMuted = false;
+      state.socialCallMode = "video";
+      await state.rtcSession.updatePresence({ camera:true });
+      const page = document.querySelector(".social-call-page");
+      page?.classList.add("video-upgraded");
+      const preview = document.querySelector("#localCallVideo");
+      if (preview) { preview.srcObject = state.localCallStream; preview.play().catch(function () {}); }
+      const button = document.querySelector("#socialVideoButton");
+      if (button) { button.dataset.socialCommand = "toggleVideo"; button.querySelector("small").textContent = "Camera off"; }
+    } catch (error) { showToast(deviceErrorMessage(error), true); }
+  }
+  if (command === "toggleCamera") await switchNativeCamera();
+  if (command === "devices") await showRoomDeviceSettings();
+}
+
+async function switchNativeCamera() {
+  if (!state.rtcSession || !state.localCallStream) return;
+  const oldTrack = state.localCallStream.getVideoTracks()[0];
+  if (!oldTrack) return showToast("No camera is available to switch.", true);
+  const nextFacing = state.callFacingMode === "user" ? "environment" : "user";
+  try {
+    const replacement = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ ideal:nextFacing }, width:{ ideal:1280 }, height:{ ideal:720 } },
+      audio:false
+    });
+    const nextTrack = replacement.getVideoTracks()[0];
+    const inStudyStream = Boolean(document.querySelector(".study-stream"));
+    nextTrack.enabled = inStudyStream ? true : !state.socialVideoMuted;
+    watchLocalTrack(nextTrack);
+    await state.rtcSession.replaceTrack("video", nextTrack);
+    state.callFacingMode = nextFacing;
+    await state.rtcSession.updatePresence({ camera:nextTrack.enabled });
+    const preview = document.querySelector("#localCallVideo");
+    if (preview) preview.srcObject = state.localCallStream;
+    if (document.querySelector(".study-stream")) renderRoomGrid();
+  } catch (error) {
+    showToast("This device could not switch cameras.", true);
+  }
+}
+
+function markNativeCallConnected() {
+  if (!state.socialCallConnected) startSocialCallTimer();
+  state.socialCallConnected = true;
+  setSocialCallStatus("Connected");
+  document.querySelector(".social-call-page")?.classList.add("peer-connected");
+}
+
+async function playRemoteCallMedia() {
+  const media = document.querySelector("#remoteCallMedia");
+  const gate = document.querySelector("#callSoundGate");
+  if (!media) return;
+  try {
+    await media.play();
+    if (gate) gate.hidden = true;
+  } catch (error) {
+    if (gate) gate.hidden = false;
+    setSocialCallStatus("Tap for sound");
+  }
+}
+
+async function startNativeCallConnection(room, audioOnly, outgoing) {
+  if (!window.isSecureContext || !navigator.mediaDevices || !window.RTCPeerConnection) {
+    setSocialCallStatus("Calls unsupported here");
+    showToast("Open the secure HTTPS site in a current version of Chrome, Safari, or Edge.", true);
+    return;
+  }
+
+  const audio = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
+  const stream = new MediaStream();
+  const unavailable = [];
+  try {
+    const microphone = await navigator.mediaDevices.getUserMedia({ audio:audio, video:false });
+    microphone.getAudioTracks().forEach(function (track) { stream.addTrack(track); });
+  } catch (error) { unavailable.push("microphone"); }
+  if (!audioOnly) {
+    try {
+      const camera = await navigator.mediaDevices.getUserMedia({
+        audio:false,
+        video:{ facingMode:{ ideal:"user" }, width:{ ideal:1280, max:1920 }, height:{ ideal:720, max:1080 } }
+      });
+      camera.getVideoTracks().forEach(function (track) { stream.addTrack(track); });
+    } catch (error) { unavailable.push("camera"); }
+  }
+
+  state.socialMicMuted = stream.getAudioTracks().length === 0;
+  state.socialVideoMuted = audioOnly || stream.getVideoTracks().length === 0;
+  if (state.socialMicMuted) updateSocialControl("audio", true);
+  if (state.socialVideoMuted && !audioOnly) updateSocialControl("video", true);
+  document.querySelector(".local-call-card")?.classList.toggle("camera-off", state.socialVideoMuted);
+  if (unavailable.length) {
+    showToast(unavailable.map(function (kind) { return kind[0].toUpperCase() + kind.slice(1); }).join(" and ") + " unavailable. The call will continue with the devices that are available.", true);
+  }
+
+  state.localCallStream = watchLocalStream(stream);
+  const preview = document.querySelector("#localCallVideo");
+  if (preview) { preview.srcObject = stream; preview.play().catch(function () {}); }
+  const clientId = crypto.randomUUID();
+  state.rtcClientId = clientId;
+  const session = new RealtimeWebRTCSession({
+    supabase:supabase,
+    authSession:state.session,
+    topic:"dm-call:" + room.dm_call_id,
+    clientId:clientId,
+    localStream:stream,
+    maxPeers:1,
+    iceServers:await resolveIceServers(),
+    presence:{ user_id:state.user.id, display_name:state.profile.display_name, camera:stream.getVideoTracks().length > 0, microphone:stream.getAudioTracks().length > 0 },
+    onRemoteStream:function (_, remote) {
+      state.remoteCallStream = remote;
+      const media = document.querySelector("#remoteCallMedia");
+      if (media) { media.srcObject = remote; playRemoteCallMedia(); }
+      const video = remote.getVideoTracks()[0];
+      const page = document.querySelector(".social-call-page");
+      if (video && video.readyState === "live") { page?.classList.add("media-connected"); page?.classList.add("video-upgraded"); }
+      if (video) {
+        video.onmute = function () { page?.classList.remove("media-connected"); };
+        video.onunmute = function () { page?.classList.add("media-connected"); };
+        video.onended = function () { page?.classList.remove("media-connected"); };
+      }
+    },
+    onPeerState:function (_, status) {
+      if (status === "connected") markNativeCallConnected();
+      else if (status === "connecting" || status === "new") setSocialCallStatus(outgoing ? "Ringing…" : "Connecting…");
+      else if (status === "disconnected") setSocialCallStatus("Reconnecting…");
+      else if (status === "failed") {
+        setSocialCallStatus("Connection blocked");
+        showToast("This network blocked the direct connection. Try another network; relay support can be added through the TURN configuration.", true);
+      } else if (status === "left") setSocialCallStatus("Call ended");
+    },
+    onEvent:function (kind) { if (kind === "hangup") leaveMeeting(false); },
+    onStatus:function (status) {
+      if (status === "SUBSCRIBED") setSocialCallStatus(outgoing ? "Calling…" : "Connecting…");
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        setSocialCallStatus("Secure connection unavailable");
+        showToast("The private call could not open its secure signaling channel. End it and try again.", true);
+      }
+    }
+  });
+  state.rtcSession = session;
+  await session.start();
+}
+
+function roomPresence(options) {
+  return {
+    user_id:state.user.id,
+    display_name:state.profile.display_name,
+    avatar_color:state.profile.avatar_color,
+    avatar_path:state.profile.avatar_path,
+    profile_frame:state.profile.profile_frame,
+    profile_sticker:state.profile.profile_sticker,
+    intention:String(options.intention || "Quiet focus"),
+    camera:Boolean(state.localCallStream && state.localCallStream.getVideoTracks().some(function (track) { return track.enabled; })),
+    microphone:Boolean(state.localCallStream && state.localCallStream.getAudioTracks().some(function (track) { return track.enabled; })),
+    effect:state.roomEffect
+  };
+}
+
+function roomTileMarkup(person, local) {
+  const clientId = person.client_id || state.rtcClientId;
+  const cameraOn = Boolean(person.camera);
+  const status = local ? "Your stream" : (state.roomPeerStates[clientId] === "connected" ? "Studying live" : "Joining…");
+  const effect = ["natural", "warm", "moonlight", "mono", "dreamy"].includes(person.effect) ? person.effect : "natural";
+  return '<article class="rtc-tile effect-' + effect + (cameraOn ? '' : ' camera-off') + (local ? ' local' : '') + '" data-rtc-tile="' + esc(clientId) + '"><video id="roomVideo-' + esc(clientId) + '" autoplay playsinline' + (local ? ' muted' : '') + '></video><div class="rtc-camera-off">' + avatarMarkup(person, "room-avatar") + '<strong>' + esc(person.display_name || "Student") + '</strong><span>' + esc(person.intention || "Quiet focus") + '</span></div><div class="rtc-tile-shade"></div><footer><div><strong>' + esc(person.display_name || "Student") + (local ? ' <em>You</em>' : '') + '</strong><span><i></i>' + esc(status) + '</span></div><div class="rtc-tile-actions">' + (!local && person.user_id ? '<button data-room-boost="' + esc(person.user_id) + '" title="Send a live Focus Boost" aria-label="Boost ' + esc(person.display_name || "student") + '">✦</button>' : '') + '<span aria-label="' + (person.microphone ? 'Microphone on' : 'Microphone muted') + '">' + (person.microphone ? '●' : '⌁') + '</span></div></footer></article>';
+}
+
+function renderRoomGrid() {
+  const grid = document.querySelector("#roomGrid");
+  if (!grid || !state.rtcClientId) return;
+  const local = Object.assign({}, roomPresence(state.joinDraft), { client_id:state.rtcClientId });
+  const streaming = state.roomParticipants.filter(function (person) { return person.stream_slot !== false; });
+  const visible = [local].concat(streaming).slice(0, 6);
+  grid.dataset.count = String(visible.length);
+  grid.innerHTML = visible.map(function (person, index) { return roomTileMarkup(person, index === 0); }).join("");
+  const localVideo = document.getElementById("roomVideo-" + state.rtcClientId);
+  if (localVideo) { localVideo.srcObject = state.localCallStream; localVideo.play().catch(function () {}); }
+  streaming.forEach(function (person) {
+    const peer = state.rtcSession && state.rtcSession.peers.get(person.client_id);
+    const video = document.getElementById("roomVideo-" + person.client_id);
+    if (video && peer && peer.remoteStream) {
+      video.srcObject = peer.remoteStream;
+      video.play().catch(function () {});
+    }
+  });
+  const count = document.querySelector("#roomPeopleCount");
+  if (count) count.textContent = String(state.roomParticipants.length + 1);
+  renderRoomPeople();
+}
+
+function renderRoomPeople() {
+  const list = document.querySelector("#roomPeopleList");
+  if (!list) return;
+  const everyone = [Object.assign({}, state.profile, roomPresence(state.joinDraft), { client_id:state.rtcClientId, local:true })].concat(state.roomParticipants);
+  list.innerHTML = everyone.map(function (person) {
+    return '<div class="room-person">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + (person.local ? ' · You' : '') + '</strong><small>' + esc(person.intention || "Quiet focus") + '</small></span><i class="' + (person.camera ? 'on' : '') + '">' + (person.camera ? 'Camera on' : 'Camera off') + '</i></div>';
+  }).join("");
+}
+
+function appendRoomChat(message, local) {
+  state.roomChat.push(Object.assign({}, message, { local:Boolean(local), at:message.at || new Date().toISOString() }));
+  state.roomChat = state.roomChat.slice(-100);
+  const list = document.querySelector("#roomChatList");
+  if (!list) return;
+  list.innerHTML = state.roomChat.map(function (item) {
+    return '<div class="room-chat-message ' + (item.local ? 'mine' : '') + '"><strong>' + esc(item.display_name || "Student") + '</strong><p>' + esc(item.body) + '</p><time>' + new Date(item.at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) + '</time></div>';
+  }).join("");
+  list.scrollTop = list.scrollHeight;
+}
+
+function showRoomBoost(payload) {
+  if (!payload || payload.receiver_id !== state.user.id) return;
+  const layer = document.querySelector("#roomCelebration");
+  if (!layer) return;
+  layer.innerHTML = '<div class="live-boost"><span>✦</span><strong>' + esc(payload.sender_name || "A study partner") + ' boosted your focus</strong><small>' + esc(payload.message || "Keep going — you’ve got this.") + '</small></div>';
+  layer.classList.add("show");
+  clearTimeout(showRoomBoost.timeout);
+  showRoomBoost.timeout = setTimeout(function () { layer.classList.remove("show"); }, 4200);
+}
+
+function handleRoomEvent(kind, payload) {
+  if (kind === "room-chat" && payload.body) appendRoomChat(payload, false);
+  if (kind === "boost") showRoomBoost(payload);
+}
+
+async function acquireRoomStream(options) {
+  if (!window.isSecureContext || !navigator.mediaDevices || !window.RTCPeerConnection) throw new Error("Native camera calls require the secure HTTPS site in a current browser.");
+  const stream = new MediaStream();
+  if (options.microphone) {
+    try {
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio:{ deviceId:options.microphoneDeviceId ? { exact:options.microphoneDeviceId } : undefined, echoCancellation:true, noiseSuppression:true, autoGainControl:true }, video:false });
+      audioStream.getAudioTracks().forEach(function (track) { watchLocalTrack(track); stream.addTrack(track); });
+    } catch (error) { showToast("Microphone stayed off. " + deviceErrorMessage(error), true); }
+  }
+  if (options.camera) {
+    const sizes = state.roomQuality === "hd" ? [1920, 1080] : (state.roomQuality === "data" ? [640, 360] : [1280, 720]);
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({ video:{ deviceId:options.cameraDeviceId ? { exact:options.cameraDeviceId } : undefined, facingMode:{ ideal:"user" }, width:{ ideal:sizes[0] }, height:{ ideal:sizes[1] } }, audio:false });
+      videoStream.getVideoTracks().forEach(function (track) { watchLocalTrack(track); stream.addTrack(track); });
+    } catch (error) { showToast("Camera stayed off. " + deviceErrorMessage(error), true); }
+  }
+  return stream;
+}
+
+function startRoomTimer(shouldRun) {
+  clearInterval(state.roomTimerId);
+  if (typeof shouldRun === "boolean") state.timerRunning = shouldRun;
+  const update = function () {
+    const timer = document.querySelector("#roomCountdown");
+    if (timer) timer.textContent = formatTimer();
+    const button = document.querySelector('[data-room-command="timer"] small');
+    if (button) button.textContent = state.timerRunning ? "Pause" : "Resume";
+  };
+  update();
+  if (!state.timerRunning) return;
+  state.roomTimerId = setInterval(async function () {
+    if (!state.timerRunning) return;
+    state.timerSeconds = Math.max(0, state.timerSeconds - 1);
+    update();
+    if (state.timerSeconds === 0) {
+      clearInterval(state.roomTimerId);
+      state.roomTimerId = null;
+      state.timerRunning = false;
+      await saveFocusSession(state.timerPreset);
+      playTimerCue();
+      showToast("Focus block complete. Take a real break ✦");
+    }
+  }, 1000);
+}
+
+async function setRoomTrack(kind, enabled) {
+  if (!state.localCallStream || !state.rtcSession) return;
+  let track = state.localCallStream.getTracks().find(function (item) { return item.kind === kind; });
+  if (enabled && !track) {
+    try {
+      const media = await navigator.mediaDevices.getUserMedia(kind === "audio" ? { audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true }, video:false } : { audio:false, video:{ facingMode:{ ideal:state.callFacingMode } } });
+      track = media.getTracks()[0];
+      watchLocalTrack(track);
+      await state.rtcSession.replaceTrack(kind, track);
+    } catch (error) { return showToast(deviceErrorMessage(error), true); }
+  }
+  if (track) track.enabled = Boolean(enabled);
+  await state.rtcSession.updatePresence(kind === "video" ? { camera:Boolean(enabled) } : { microphone:Boolean(enabled) });
+  renderRoomGrid();
+}
+
+async function runRoomCommand(command) {
+  if (!state.rtcSession) return;
+  if (command === "audio") {
+    const track = state.localCallStream.getAudioTracks()[0];
+    await setRoomTrack("audio", !(track && track.enabled));
+  }
+  if (command === "video") {
+    const track = state.localCallStream.getVideoTracks()[0];
+    await setRoomTrack("video", !(track && track.enabled));
+  }
+  if (command === "camera") await switchNativeCamera();
+  if (command === "devices") await showRoomDeviceSettings();
+  if (command === "people") document.querySelector("#roomPeopleDrawer")?.classList.toggle("open");
+  if (command === "chat") document.querySelector("#roomChatDrawer")?.classList.toggle("open");
+  if (command === "effects") showMeetingDecorations();
+  if (command === "timer") startRoomTimer(!state.timerRunning);
+  if (command === "reset") { state.timerSeconds = state.timerPreset * 60; startRoomTimer(true); }
+}
+
+async function showRoomDeviceSettings() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cameras = devices.filter(function (item) { return item.kind === "videoinput"; });
+  const microphones = devices.filter(function (item) { return item.kind === "audioinput"; });
+  const outputs = devices.filter(function (item) { return item.kind === "audiooutput"; });
+  const options = function (items, fallback) { return items.map(function (item, index) { return '<option value="' + esc(item.deviceId) + '">' + esc(item.label || fallback + " " + (index + 1)) + '</option>'; }).join(""); };
+  showModal("Camera & audio", '<form id="roomDeviceForm" class="form"><div class="field"><label>Camera</label><select name="cameraDevice">' + options(cameras, "Camera") + '</select></div><div class="field"><label>Microphone</label><select name="microphoneDevice">' + options(microphones, "Microphone") + '</select></div>' + (outputs.length && typeof HTMLMediaElement.prototype.setSinkId === "function" ? '<div class="field"><label>Speaker</label><select name="speakerDevice">' + options(outputs, "Speaker") + '</select></div>' : '<p class="form-note">Speaker selection is managed by your browser on this device.</p>') + '<button class="btn btn-primary">Apply devices</button></form>');
+}
+
+async function applyRoomDevices(form) {
+  const data = new FormData(form);
+  const replacements = [["video", "cameraDevice"], ["audio", "microphoneDevice"]];
+  for (const pair of replacements) {
+    const deviceId = String(data.get(pair[1]) || "");
+    if (!deviceId) continue;
+    try {
+      const previous = state.localCallStream && state.localCallStream.getTracks().find(function (track) { return track.kind === pair[0]; });
+      const media = await navigator.mediaDevices.getUserMedia(pair[0] === "video" ? { video:{ deviceId:{ exact:deviceId } }, audio:false } : { audio:{ deviceId:{ exact:deviceId }, echoCancellation:true, noiseSuppression:true, autoGainControl:true }, video:false });
+      const nextTrack = media.getTracks()[0];
+      nextTrack.enabled = previous ? previous.enabled : true;
+      watchLocalTrack(nextTrack);
+      await state.rtcSession.replaceTrack(pair[0], nextTrack);
+      if (document.querySelector(".social-call-page")) {
+        if (pair[0] === "audio") { state.socialMicMuted = !nextTrack.enabled; updateSocialControl("audio", state.socialMicMuted); }
+        if (pair[0] === "video") { state.socialVideoMuted = !nextTrack.enabled; updateSocialControl("video", state.socialVideoMuted); document.querySelector(".local-call-card")?.classList.toggle("camera-off", state.socialVideoMuted); }
+      }
+    } catch (error) { showToast("That device could not be selected.", true); }
+  }
+  const speaker = String(data.get("speakerDevice") || "");
+  if (speaker) await Promise.all(Array.from(document.querySelectorAll(".rtc-tile video,.social-call-page video,.social-call-page audio")).map(function (media) { return typeof media.setSinkId === "function" ? media.setSinkId(speaker).catch(function () {}) : null; }));
+  await state.rtcSession.updatePresence(roomPresence(state.joinDraft));
+  closeModal();
+  renderRoomGrid();
+  showToast("Call devices updated.");
+}
+
+function enableCallPreviewDrag() {
+  const preview = document.querySelector("[data-draggable-preview]");
+  if (!preview) return;
+  let drag = null;
+  preview.addEventListener("pointerdown", function (event) {
+    if (event.button !== undefined && event.button !== 0) return;
+    const rect = preview.getBoundingClientRect();
+    drag = { x:event.clientX, y:event.clientY, left:rect.left, top:rect.top };
+    preview.style.left = rect.left + "px";
+    preview.style.top = rect.top + "px";
+    preview.style.right = "auto";
+    preview.setPointerCapture(event.pointerId);
+  });
+  preview.addEventListener("pointermove", function (event) {
+    if (!drag) return;
+    const width = preview.offsetWidth;
+    const height = preview.offsetHeight;
+    preview.style.left = Math.max(8, Math.min(window.innerWidth - width - 8, drag.left + event.clientX - drag.x)) + "px";
+    preview.style.top = Math.max(76, Math.min(window.innerHeight - height - 110, drag.top + event.clientY - drag.y)) + "px";
+  });
+  const end = function () { drag = null; };
+  preview.addEventListener("pointerup", end);
+  preview.addEventListener("pointercancel", end);
+}
+
+async function mountSocialCall(room, person, outgoing) {
+  modalRoot.innerHTML = "";
+  if (state.rtcSession) await state.rtcSession.stop({ notify:false });
+  document.querySelector(".social-call-page")?.remove();
+  state.activeRoom = room;
+  state.activeDmCallId = room.dm_call_id;
+  state.socialCallPerson = person || { display_name:"Study partner", avatar_color:"#7c6cff" };
+  state.socialCallMode = room.call_mode || "video";
+  state.socialCallConnected = false;
+  state.socialCallStartedAt = null;
+  state.socialMicMuted = false;
+  state.socialVideoMuted = state.socialCallMode === "audio";
+  state.callFacingMode = "user";
+  const audioOnly = state.socialCallMode === "audio";
+  const partner = state.socialCallPerson;
+  const videoControls = audioOnly
+    ? '<button id="socialVideoButton" class="social-control" data-social-command="upgradeVideo" aria-label="Turn on camera"><span>▣</span><small>Camera on</small></button><button class="social-control mobile-flip upgrade-only" data-social-command="toggleCamera" aria-label="Switch camera"><span>↻</span><small>Flip</small></button>'
+    : '<button id="socialVideoButton" class="social-control" data-social-command="toggleVideo" aria-label="Turn camera off"><span>▣</span><small>Camera off</small></button><button class="social-control mobile-flip" data-social-command="toggleCamera" aria-label="Switch camera"><span>↻</span><small>Flip</small></button>';
+  const audioVisual = '<div class="audio-call-visual"><div class="audio-pulse one"></div><div class="audio-pulse two"></div>' + avatarMarkup(partner, "social-call-avatar") + '<h1>' + esc(partner.display_name) + '</h1><p>' + (audioOnly ? 'Private audio call' : 'Waiting for video…') + '</p></div>';
+  const mediaStage = '<div class="native-call-stage"><video id="remoteCallMedia" class="remote-call-video" autoplay playsinline></video><div class="remote-call-placeholder">' + audioVisual + '</div><div class="local-call-card" data-draggable-preview><video id="localCallVideo" autoplay muted playsinline></video><span>You · drag me</span></div></div>';
+  app.insertAdjacentHTML("beforeend", '<section class="social-call-page native-call ' + (audioOnly ? 'audio-only' : 'video-call') + '">' + mediaStage + '<header class="social-call-top"><div class="social-call-identity">' + avatarMarkup(partner) + '<div><strong>' + esc(partner.display_name) + '</strong><span><i></i><b id="socialCallStatus">' + (outgoing ? 'Calling…' : 'Connecting…') + '</b><b id="socialCallTimer">00:00</b></span></div></div><div class="social-call-top-actions"><span class="social-call-private">⌁ Private</span><button class="call-help-button" data-call-help aria-label="Call help">?</button></div></header><button id="callSoundGate" class="call-sound-gate" data-call-play hidden>Tap to hear call</button><div class="social-call-safety">Browser-to-browser · Mellow Commons does not record this call</div><nav class="social-call-controls" aria-label="Call controls"><button id="socialMicButton" class="social-control" data-social-command="toggleAudio" aria-label="Mute microphone"><span>●</span><small>Mute</small></button>' + videoControls + '<button class="social-control" data-social-command="devices" aria-label="Call devices"><span>⚙</span><small>Devices</small></button><button class="social-control" data-social-fullscreen aria-label="Full screen"><span>⛶</span><small>Full screen</small></button><button class="social-control end" data-social-end aria-label="End call"><span>☎</span><small>End</small></button></nav><aside class="call-help-sheet" id="callHelpSheet" hidden><button data-close-call-help aria-label="Close call help">×</button><span class="eyebrow">Quick call check</span><h2>Camera or microphone not working?</h2><ol><li>Open the lock or camera icon beside the website address.</li><li>Allow camera and microphone access.</li><li>Make sure no other app is using the camera.</li><li>End this call and try once more.</li></ol><p>For the smoothest call, use current Chrome, Safari, or Edge on a stable connection.</p></aside></section>');
+  enableCallPreviewDrag();
+  await startNativeCallConnection(room, audioOnly, outgoing);
 }
 
 async function mountMeeting(room, isPrivate, joinOptions) {
   const options = joinOptions || state.joinDraft;
   if (!(await beginFocusVisit(room, isPrivate))) { state.view = "plus"; renderPlus(); return; }
   state.activeRoom = room;
-  state.activeDmCallId = room.dm_call_id || null;
-  state.timerPreset = Number(options.duration || 50);
+  state.activeDmCallId = null;
+  state.joinDraft = Object.assign({}, state.joinDraft, options);
+  state.timerPreset = Math.min(240, Math.max(1, Number(options.duration || 50)));
   state.timerSeconds = state.timerPreset * 60;
-  const directUrl = "https://meet.jit.si/" + encodeURIComponent(room.jitsi_room);
-  app.insertAdjacentHTML("beforeend", '<section class="meeting-page" data-frame="' + esc(state.meetingFrame) + '"><header class="meeting-head"><button class="btn btn-sm" data-leave-meeting>← Finish session</button><div class="meeting-context"><h3>' + esc(room.name || room.title) + '</h3><span>' + esc(options.intention || "Focus session") + ' · ' + state.timerPreset + ' min</span></div><span class="meeting-status" id="meetingStatus">Opening room…</span><span class="meeting-allowance" id="meetingAllowance">' + (state.focusAllowance.is_unlimited ? 'Unlimited room time' : fmtMinutes(Math.ceil(Number(state.focusAllowance.remaining_seconds || 0) / 60)) + ' left today') + '</span><a class="btn btn-sm" href="' + directUrl + '" target="_blank" rel="noopener noreferrer">Open separately ↗</a></header><nav class="meeting-tools" aria-label="Room controls"><button data-meeting-command="toggleAudio">Mic</button><button data-meeting-command="toggleVideo">Camera</button><button data-meeting-command="toggleChat">Chat</button><button data-meeting-command="toggleTileView">Grid</button><button data-meeting-fullscreen>Fullscreen</button><button data-meeting-decorate>Decorate ✦</button></nav><div class="meeting-focusbar"><span>Current intention</span><strong>' + esc(options.intention || "Focus session") + '</strong><span class="meeting-timer">' + state.timerPreset + ':00</span></div><div id="jitsiMount"></div><span id="meetingSticker" class="meeting-sticker">' + stickerGlyph(state.meetingSticker) + '</span></section>');
-  const ready = await ensureJitsi();
-  if (!ready) {
-    document.querySelector("#jitsiMount").innerHTML = '<div class="meeting-error"><h2>Open the room directly</h2><p>Your browser blocked the embedded call. The same live camera room can still open securely in Jitsi.</p><a class="btn btn-primary" href="' + directUrl + '" target="_blank" rel="noopener noreferrer">Open camera room</a><p class="form-note">Camera and microphone permissions are controlled by your browser.</p></div>'; return;
-  }
+  state.roomParticipants = [];
+  state.roomPeerStates = {};
+  state.roomChat = [];
+  state.roomConnectedAt = Date.now();
+  state.callFacingMode = "user";
+  app.insertAdjacentHTML("beforeend", '<section class="meeting-page study-stream" data-frame="' + esc(state.meetingFrame) + '"><header class="meeting-head"><div class="stream-room-identity"><span class="stream-live"><i></i> Study stream</span><div><h3>' + esc(room.name || room.title) + '</h3><span id="meetingStatus">Opening your stream…</span></div></div><div class="stream-head-stats"><span><strong id="roomPeopleCount">1</strong> studying</span><span class="meeting-allowance" id="meetingAllowance">' + (isPrivate ? 'Invite-only room' : (state.focusAllowance.is_unlimited ? 'Unlimited today' : fmtMinutes(Math.ceil(Number(state.focusAllowance.remaining_seconds || 0) / 60)) + ' left today')) + '</span></div><button class="btn btn-sm stream-finish" data-leave-meeting>Finish session</button></header><main class="rtc-stage"><div class="rtc-grid" id="roomGrid" data-count="1"><div class="room-connecting"><span class="brand-spinner">' + brandLogo() + '</span><strong>Preparing your study stream</strong><small>Your camera and microphone remain under your control.</small></div></div><div class="room-celebration" id="roomCelebration" aria-live="polite"></div><aside class="room-drawer room-people-drawer" id="roomPeopleDrawer"><header><div><span class="eyebrow">In this room</span><h3>Study partners</h3></div><button data-room-command="people" aria-label="Close participants">×</button></header><div id="roomPeopleList"></div></aside><aside class="room-drawer room-chat-drawer" id="roomChatDrawer"><header><div><span class="eyebrow">Quiet room chat</span><h3>Check in</h3></div><button data-room-command="chat" aria-label="Close chat">×</button></header><div class="room-chat-list" id="roomChatList"><div class="room-chat-empty">Share a short, study-related check-in.</div></div><form id="roomChatForm"><input name="message" maxlength="240" required placeholder="What are you working on?"><button aria-label="Send room message">↑</button></form></aside><span id="meetingSticker" class="meeting-sticker">' + stickerGlyph(state.meetingSticker) + '</span></main><div class="stream-focus-pill"><span>Now focusing on</span><strong>' + esc(options.intention || "Quiet focus") + '</strong><button data-room-command="timer"><b id="roomCountdown">' + formatTimer() + '</b><small>Pause</small></button></div><nav class="room-control-dock" aria-label="Study stream controls"><button data-room-command="audio" title="Microphone"><span>●</span><small>Mic</small></button><button data-room-command="video" title="Camera"><span>▣</span><small>Camera</small></button><button data-room-command="camera" title="Switch camera"><span>↻</span><small>Flip</small></button><button data-room-command="devices" title="Camera and audio devices"><span>⚙</span><small>Devices</small></button><button data-room-command="people" title="Participants"><span>◎</span><small>People</small></button><button data-room-command="chat" title="Room chat"><span>◌</span><small>Chat</small></button><button data-room-command="effects" title="Effects and decorations"><span>✦</span><small>Effects</small></button><button data-meeting-fullscreen title="Full screen"><span>⛶</span><small>Full</small></button><button class="leave" data-leave-meeting title="Leave session"><span>↪</span><small>Leave</small></button></nav></section>');
+  const streamPage = document.querySelector(".study-stream");
+  if (streamPage) streamPage.dataset.mirror = String(state.roomMirror);
   try {
-    state.jitsi = new window.JitsiMeetExternalAPI("meet.jit.si", {
-      roomName: room.jitsi_room,
-      parentNode: document.querySelector("#jitsiMount"),
-      width: "100%",
-      height: "100%",
-      userInfo: { displayName:state.profile.display_name },
-      configOverwrite: {
-        prejoinPageEnabled: false,
-        startWithAudioMuted: !options.microphone,
-        startWithVideoMuted: !options.camera,
-        disableDeepLinking: true,
-        enableWelcomePage: false,
-        useHostPageLocalStorage: true
+    state.localCallStream = await acquireRoomStream(options);
+    state.rtcClientId = crypto.randomUUID();
+    const maxParticipants = isPrivate ? Number(room.max_participants || 6) : 6;
+    state.rtcSession = new RealtimeWebRTCSession({
+      supabase:supabase,
+      authSession:state.session,
+      topic:"study-room:" + (isPrivate ? "private" : "public") + ":" + room.id,
+      clientId:state.rtcClientId,
+      localStream:state.localCallStream,
+      maxPeers:Math.max(1, maxParticipants - 1),
+      iceServers:await resolveIceServers(),
+      presence:roomPresence(options),
+      onParticipants:function (people) { state.roomParticipants = people; renderRoomGrid(); },
+      onRemoteStream:function () { renderRoomGrid(); },
+      onPeerState:function (peerId, status) {
+        state.roomPeerStates[peerId] = status;
+        renderRoomGrid();
+        if (status === "failed") showToast("A study partner could not connect on this network. TURN relay support can improve restrictive networks.", true);
       },
-      interfaceConfigOverwrite: { MOBILE_APP_PROMO:false, SHOW_JITSI_WATERMARK:false }
-      ,toolbarButtons:["microphone","camera","closedcaptions","desktop","fullscreen","hangup","profile","chat","settings","raisehand","videoquality","filmstrip","tileview","videobackgroundblur","select-background","participants-pane","security","stats","shortcuts","noise-suppression"]
+      onEvent:handleRoomEvent,
+      onStatus:function (status) {
+        const label = document.querySelector("#meetingStatus");
+        if (status === "SUBSCRIBED") {
+          if (label) label.textContent = isPrivate ? "Private room · connected" : "Live · browser-to-browser";
+          trackPresence(room, isPrivate);
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          if (label) label.textContent = "Connection interrupted";
+          showToast("The secure room connection was interrupted. Rejoin the room to try again.", true);
+        }
+      }
     });
-    state.jitsi.addListener("videoConferenceJoined", function () {
-      const status = document.querySelector("#meetingStatus"); if (status) status.textContent = "Connected";
-      if (options.cameraDeviceId) state.jitsi.executeCommand("setVideoInputDevice", "Selected camera", options.cameraDeviceId);
-      if (options.microphoneDeviceId) state.jitsi.executeCommand("setAudioInputDevice", "Selected microphone", options.microphoneDeviceId);
-      trackPresence(room, isPrivate);
-    });
-    state.jitsi.addListener("videoConferenceLeft", leaveMeeting);
-    state.jitsi.addListener("readyToClose", leaveMeeting);
-    state.jitsi.addListener("cameraError", function () { showToast("Jitsi could not open the camera. Check the site permission or use Open separately.", true); });
-    state.jitsi.addListener("micError", function () { showToast("Jitsi could not open the microphone. Check the site permission or use Open separately.", true); });
+    renderRoomGrid();
+    await state.rtcSession.start();
+    startRoomTimer(true);
   } catch (error) {
-    document.querySelector("#jitsiMount").innerHTML = '<div class="meeting-error"><h2>Could not start the call</h2><p>' + esc(error.message) + '</p></div>';
+    const grid = document.querySelector("#roomGrid");
+    if (grid) grid.innerHTML = '<div class="meeting-error"><h2>Your study stream could not start</h2><p>' + esc(error.message) + '</p><button class="btn btn-primary" data-leave-meeting>Return to rooms</button></div>';
+    if (state.focusVisitId) await endFocusVisit();
   }
 }
 
 function trackPresence(room, isPrivate) {
   if (state.presenceChannel) supabase.removeChannel(state.presenceChannel);
-  const channelName = isPrivate ? "private-presence:" + room.id : "presence:" + room.slug;
+  state.presenceChannel = null;
+  // Native private-room presence already lives on its authorized WebRTC channel.
+  // The legacy public channel remains only for public lobby occupancy cards.
+  if (isPrivate) return;
+  const channelName = "presence:" + room.slug;
   state.presenceChannel = supabase.channel(channelName, { config:{ presence:{ key:state.user.id } } });
   state.presenceChannel.subscribe(async function (status) {
     if (status === "SUBSCRIBED") await state.presenceChannel.track({ user_id:state.user.id, display_name:state.profile.display_name, joined_at:new Date().toISOString() });
@@ -1581,20 +2233,47 @@ function trackPresence(room, isPrivate) {
 async function leaveMeeting(endCall) {
   if (state.leavingMeeting) return;
   state.leavingMeeting = true;
-  const dmCallId = state.activeDmCallId;
-  state.activeDmCallId = null;
-  if (state.presenceChannel) { await state.presenceChannel.untrack(); await supabase.removeChannel(state.presenceChannel); state.presenceChannel = null; }
-  if (state.jitsi) { state.jitsi.dispose(); state.jitsi = null; }
-  state.activeRoom = null;
-  document.querySelector(".meeting-page")?.remove();
-  await endFocusVisit();
-  if (dmCallId && endCall !== false) {
-    const result = await supabase.rpc("end_dm_call", { p_call_id:dmCallId });
-    if (result.error) showToast(result.error.message, true);
-    if (state.activeConversationId) await loadDmCalls(state.activeConversationId);
-    if (state.view === "messages") renderMessages();
+  try {
+    const dmCallId = state.activeDmCallId;
+    if (state.rtcSession && dmCallId && endCall !== false) await state.rtcSession.sendEvent("hangup", { call_id:dmCallId });
+    state.activeDmCallId = null;
+    clearInterval(state.socialCallTimerId);
+    clearInterval(state.roomTimerId);
+    state.socialCallTimerId = null;
+    state.socialCallStartedAt = null;
+    state.socialCallConnected = false;
+    state.socialCallPerson = null;
+    state.socialCallMode = null;
+    state.roomTimerId = null;
+    state.roomParticipants = [];
+    state.roomPeerStates = {};
+    state.roomChat = [];
+    if (state.presenceChannel) { await state.presenceChannel.untrack(); await supabase.removeChannel(state.presenceChannel); state.presenceChannel = null; }
+    if (state.rtcSession) {
+      const rtc = state.rtcSession;
+      state.rtcSession = null;
+      await rtc.stop({ notify:true });
+    }
+    if (state.localCallStream) state.localCallStream.getTracks().forEach(function (track) { track.stop(); });
+    if (state.remoteCallStream) state.remoteCallStream.getTracks().forEach(function (track) { track.stop(); });
+    state.localCallStream = null;
+    state.remoteCallStream = null;
+    state.activeRoom = null;
+    state.rtcClientId = null;
+    state.roomConnectedAt = null;
+    document.querySelector(".meeting-page")?.remove();
+    document.querySelector(".social-call-page")?.remove();
+    if (document.fullscreenElement) await document.exitFullscreen().catch(function () {});
+    if (state.focusVisitId) await endFocusVisit();
+    if (dmCallId && endCall !== false) {
+      const result = await supabase.rpc("end_dm_call", { p_call_id:dmCallId });
+      if (result.error) showToast(result.error.message, true);
+      if (state.activeConversationId) await loadDmCalls(state.activeConversationId);
+      if (state.view === "messages") renderMessages();
+    }
+  } finally {
+    state.leavingMeeting = false;
   }
-  state.leavingMeeting = false;
 }
 
 async function sendEncouragement(userId, kind) {
@@ -1604,13 +2283,19 @@ async function sendEncouragement(userId, kind) {
 
 async function submitEncouragement(form) {
   const data = new FormData(form);
-  const result = await supabase.rpc("send_encouragement", { p_receiver_id:data.get("receiver"), p_kind:data.get("kind"), p_message:data.get("message") || "" });
+  const receiverId = String(data.get("receiver") || "");
+  const kind = String(data.get("kind") || "encouragement");
+  const message = String(data.get("message") || "");
+  const result = await supabase.rpc("send_encouragement", { p_receiver_id:receiverId, p_kind:kind, p_message:message });
   if (result.error) return showToast(result.error.message, true);
   closeModal();
   const allowance = await supabase.rpc("get_weekly_allowance");
   if (allowance.data && allowance.data[0]) state.allowance = allowance.data[0];
-  showToast(data.get("kind") === "focus_boost" ? "Focus Boost sent." : "Encouragement sent.");
-  renderEncouragements();
+  if (kind === "focus_boost" && state.rtcSession && document.querySelector(".study-stream")) {
+    await state.rtcSession.sendEvent("boost", { receiver_id:receiverId, sender_name:state.profile.display_name, message:message });
+  }
+  showToast(kind === "focus_boost" ? "Focus Boost sent live ✦" : "Encouragement sent.");
+  if (!document.querySelector(".meeting-page,.social-call-page")) renderEncouragements();
 }
 
 async function createPrivateRoom(form) {
@@ -1637,7 +2322,7 @@ async function saveProfile(form, privacyOnly) {
   if (privacyOnly) {
     update = { show_profile:data.has("show_profile"), show_country:data.has("show_country"), allow_invites:data.has("allow_invites"), accepting_dms:data.has("accepting_dms"), accepting_encouragements:data.has("accepting_encouragements") };
   } else {
-    update = { display_name:String(data.get("display_name")).trim(), subject:String(data.get("subject")).trim(), bio:String(data.get("bio")).trim(), country:String(data.get("country")).trim(), avatar_color:data.get("avatar_color"), profile_frame:data.get("profile_frame") || "none", profile_sticker:data.get("profile_sticker") || "" };
+    update = { display_name:String(data.get("display_name")).trim(), subject:String(data.get("subject")).trim(), bio:String(data.get("bio")).trim(), country:String(data.get("country")).trim(), avatar_color:data.get("avatar_color"), profile_banner:safeBanner(data.get("profile_banner")), profile_frame:data.get("profile_frame") || "none", profile_sticker:data.get("profile_sticker") || "" };
   }
   const result = await supabase.from("profiles").update(update).eq("id", state.user.id).select().single();
   if (result.error) return showToast(result.error.message, true);
@@ -1647,7 +2332,7 @@ async function saveProfile(form, privacyOnly) {
 function saveStudyPreferences(form) {
   const data = new FormData(form);
   state.preferences = {
-    defaultDuration:Number(data.get("defaultDuration") || 50),
+    defaultDuration:Math.min(240, Math.max(1, Number(data.get("defaultDuration") || 50))),
     defaultRoom:String(data.get("defaultRoom") || "deep-focus"),
     defaultCamera:data.has("defaultCamera"),
     defaultMicrophone:data.has("defaultMicrophone"),
@@ -1723,7 +2408,7 @@ function checkout(interval) {
 }
 
 function showPrivacy() {
-  showModal("Mellow Commons privacy summary", '<div class="article-body"><h3>Your account data</h3><p>Mellow Commons stores your account, profile, goals, sessions, plan status, privacy choices, and encouragement activity in Supabase. Row-level rules limit personal data to the correct account.</p><h3>Camera and microphone</h3><p>Calls are provided through Jitsi. Mellow Commons does not record or store your call video or audio. Your browser asks for permission, and calls begin with camera and microphone off.</p><h3>Public and private rooms</h3><p>Public study rooms are open to signed-in members. Private rooms require an unguessable invite and expire after 24 hours. Do not share an invite publicly.</p><h3>Payments</h3><p>When enabled, Stripe processes card and Apple Pay details. Mellow Commons stores subscription status but never stores full payment-card details.</p></div>', true);
+  showModal("Mellow Commons privacy summary", '<div class="article-body"><h3>Your account data</h3><p>Mellow Commons stores your account, profile, goals, sessions, plan status, privacy choices, and encouragement activity in Supabase. Row-level rules limit personal data to the correct account.</p><h3>Calls and study streams</h3><p>Direct calls and study-room media use native browser WebRTC. Supabase carries short-lived connection messages only for authorized room members; Mellow Commons does not record or store call audio or video.</p><h3>Private rooms</h3><p>Private-room invites are unguessable, membership is enforced on the server, and rooms expire after 24 hours. Do not share an invite publicly.</p><h3>Payments</h3><p>When enabled, Stripe processes card and Apple Pay details. Mellow Commons stores subscription status but never stores full payment-card details.</p></div>', true);
 }
 
 function showBlog(id) {
@@ -1758,13 +2443,14 @@ function setAmbient(kind) {
     source.connect(gain).connect(context.destination); source.start();
     state.audio = { context:context, source:source };
   }
-  renderApp();
+  if (!document.querySelector(".meeting-page,.social-call-page")) renderApp();
 }
 
 document.addEventListener("click", async function (event) {
+  if (event.target.matches("[data-close-modal]")) return closeModal();
   const target = event.target.closest("button,a,article");
   if (!target) return;
-  if (target.matches("[data-close-modal]") || event.target.matches("[data-close-modal]")) return closeModal();
+  if (target.matches("[data-close-modal]")) return closeModal();
   if (target.dataset.publicHome !== undefined) { event.preventDefault(); state.session ? (state.view = "home", renderApp()) : renderLanding(); }
   if (target.dataset.auth) { state.authMode = target.dataset.auth; renderAuth(); }
   if (target.dataset.authTab) { state.authMode = target.dataset.authTab; renderAuth(); }
@@ -1792,12 +2478,22 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.messageMember) await startConversation(target.dataset.messageMember);
   if (target.dataset.conversation) await openConversation(target.dataset.conversation);
   if (target.dataset.acceptDm) await acceptConversation(target.dataset.acceptDm);
-  if (target.dataset.startDmCall) startDmCallSetup(target.dataset.startDmCall);
+  if (target.dataset.startDmCall) await startDmCallSetup(target.dataset.startDmCall);
   if (target.dataset.answerDmCall) await answerDmCall(target.dataset.answerDmCall, true);
   if (target.dataset.declineDmCall) await answerDmCall(target.dataset.declineDmCall, false);
   if (target.dataset.joinDmCall) await joinDmCall(target.dataset.joinDmCall);
   if (target.dataset.endDmCall) await endDmCall(target.dataset.endDmCall);
   if (target.dataset.recordVoice !== undefined) await toggleVoiceRecording();
+  if (target.dataset.messageOptions) { state.messageMenuId = state.messageMenuId === target.dataset.messageOptions ? null : target.dataset.messageOptions; renderMessages(); }
+  if (target.dataset.messageReaction) await toggleMessageReaction(target.dataset.messageReaction, target.dataset.emoji);
+  if (target.dataset.copyMessage) await copyDmMessage(target.dataset.copyMessage);
+  if (target.dataset.toggleMessageEmoji !== undefined) { state.messageEmojiOpen = !state.messageEmojiOpen; renderMessages(); }
+  if (target.dataset.insertEmoji) {
+    const input = document.querySelector('#dmForm textarea[name="message"]');
+    if (input) { input.value += target.dataset.insertEmoji; state.messageDraft = input.value; input.focus(); }
+    state.messageEmojiOpen = false;
+    document.querySelector(".composer-emoji-picker")?.setAttribute("hidden", "");
+  }
   if (target.dataset.profileOptions) showReportModal(target.dataset.profileOptions, null);
   if (target.dataset.reportMessage) showReportModal(target.dataset.reportUser, target.dataset.reportMessage);
   if (target.dataset.blockMember) await blockMember(target.dataset.blockMember);
@@ -1809,11 +2505,26 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.joinRoom) await joinPublicRoom(target.dataset.joinRoom);
   if (target.dataset.checkDevices !== undefined) await checkDevices();
   if (target.dataset.leaveMeeting !== undefined) await leaveMeeting();
-  if (target.dataset.meetingCommand && state.jitsi) state.jitsi.executeCommand(target.dataset.meetingCommand);
+  if (target.dataset.socialCommand) await runSocialCallCommand(target.dataset.socialCommand);
+  if (target.dataset.socialFullscreen !== undefined) {
+    const page = document.querySelector(".social-call-page");
+    if (page) {
+      if (document.fullscreenElement) await document.exitFullscreen().catch(function () {});
+      else await page.requestFullscreen().catch(function () { showToast("Full screen is unavailable in this browser.", true); });
+    }
+  }
+  if (target.dataset.socialEnd !== undefined) await leaveMeeting();
+  if (target.dataset.callPlay !== undefined) await playRemoteCallMedia();
+  if (target.dataset.callHelp !== undefined) document.querySelector("#callHelpSheet")?.removeAttribute("hidden");
+  if (target.dataset.closeCallHelp !== undefined) document.querySelector("#callHelpSheet")?.setAttribute("hidden", "");
+  if (target.dataset.celebrateAchievement) showAchievementCelebration(target.dataset.celebrateAchievement);
+  if (target.dataset.roomCommand) await runRoomCommand(target.dataset.roomCommand);
+  if (target.dataset.roomBoost) await sendEncouragement(target.dataset.roomBoost, "focus_boost");
   if (target.dataset.meetingFullscreen !== undefined) { const page = document.querySelector(".meeting-page"); if (page) { if (document.fullscreenElement) document.exitFullscreen(); else page.requestFullscreen(); } }
   if (target.dataset.meetingDecorate !== undefined) showMeetingDecorations();
   if (target.dataset.goalDelete) await deleteGoal(target.dataset.goalDelete);
   if (target.dataset.timerPreset) setTimerPreset(Number(target.dataset.timerPreset));
+  if (target.dataset.customTimer !== undefined) showCustomTimer();
   if (target.dataset.timerToggle !== undefined) toggleTimer();
   if (target.dataset.timerReset !== undefined) resetTimer();
   if (target.dataset.encourage) await sendEncouragement(target.dataset.encourage, "encouragement");
@@ -1826,7 +2537,14 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.themeToggle !== undefined) setTheme(state.theme === "dark" ? "light" : "dark");
   if (target.dataset.theme) setTheme(target.dataset.theme);
   if (target.dataset.ambient) setAmbient(target.dataset.ambient);
-  if (target.dataset.toggleNav !== undefined) { state.mobileNav = !state.mobileNav; renderApp(); }
+  if (target.dataset.toggleNav !== undefined) {
+    if (window.matchMedia("(max-width: 760px)").matches) state.mobileNav = !state.mobileNav;
+    else {
+      state.navCollapsed = !state.navCollapsed;
+      localStorage.setItem("mellow-nav-collapsed", String(state.navCollapsed));
+    }
+    renderApp();
+  }
   if (target.dataset.signout !== undefined) await supabase.auth.signOut();
 });
 
@@ -1837,6 +2555,10 @@ document.addEventListener("change", async function (event) {
   if (event.target.id === "dmMediaInput") { await uploadDmAttachment(event.target.files && event.target.files[0], "image"); event.target.value = ""; }
   if (event.target.dataset.buddySearch !== undefined) { state.buddySearch = event.target.value; renderBuddies(); }
   if (event.target.dataset.feedbackSearch !== undefined) { state.feedbackSearch = event.target.value; await refreshFeedback(); renderFeedback(); }
+});
+
+document.addEventListener("input", function (event) {
+  if (event.target.dataset.messageDraft !== undefined) state.messageDraft = event.target.value;
 });
 
 document.addEventListener("submit", async function (event) {
@@ -1850,10 +2572,22 @@ document.addEventListener("submit", async function (event) {
   if (form.id === "feedbackForm") await submitFeedback(form);
   if (form.id === "buddyForm") await submitBuddy(form);
   if (form.id === "meetingDecorForm") saveMeetingDecorations(form);
+  if (form.id === "customTimerForm") { const data = new FormData(form); setTimerPreset(data.get("minutes")); closeModal(); showToast("Custom timer set to " + state.timerPreset + " minutes."); }
+  if (form.id === "roomDeviceForm") await applyRoomDevices(form);
+  if (form.id === "roomChatForm") {
+    const data = new FormData(form);
+    const body = String(data.get("message") || "").trim();
+    if (body && state.rtcSession) {
+      const message = { body:body, display_name:state.profile.display_name, user_id:state.user.id, at:new Date().toISOString() };
+      appendRoomChat(message, true);
+      await state.rtcSession.sendEvent("room-chat", message);
+      form.reset();
+    }
+  }
   if (form.id === "quickSessionForm") {
     const data = new FormData(form);
     state.joinDraft.intention = String(data.get("intention") || "").trim();
-    state.joinDraft.duration = Number(data.get("duration") || 50);
+    state.joinDraft.duration = Math.min(240, Math.max(1, Number(data.get("duration") || 50)));
     const preferredRoom = state.rooms.find(function (room) { return room.slug === state.preferences.defaultRoom; }) || state.rooms[0];
     if (preferredRoom) showJoinLobby(preferredRoom, false);
   }
@@ -1864,7 +2598,7 @@ document.addEventListener("submit", async function (event) {
     const dmStart = state.pendingDmStart;
     state.joinDraft = {
       intention:String(data.get("intention") || "").trim(),
-      duration:Number(data.get("duration") || 50),
+      duration:Math.min(240, Math.max(1, Number(data.get("duration") || 50))),
       camera:data.has("camera"),
       microphone:data.has("microphone"),
       cameraDeviceId:String(data.get("cameraDevice") || ""),
@@ -1894,9 +2628,20 @@ window.addEventListener("beforeunload", function () {
   if (state.dmChannel) supabase.removeChannel(state.dmChannel);
   if (state.dmCallChannel) supabase.removeChannel(state.dmCallChannel);
   if (state.communityChannel) supabase.removeChannel(state.communityChannel);
+  if (state.rtcSession) {
+    if (state.activeDmCallId) state.rtcSession.sendEvent("hangup", { call_id:state.activeDmCallId });
+    state.rtcSession.stop({ notify:true });
+  }
+  if (state.activeDmCallId) supabase.rpc("end_dm_call", { p_call_id:state.activeDmCallId });
+  if (state.localCallStream) state.localCallStream.getTracks().forEach(function (track) { track.stop(); });
   if (state.focusVisitId) supabase.rpc("end_focus_room_visit", { p_visit_id:state.focusVisitId });
   if (state.voiceStream) state.voiceStream.getTracks().forEach(function (track) { track.stop(); });
   stopAmbient();
+});
+
+window.addEventListener("online", function () { if (state.focusVisitId) heartbeatFocusVisit(); });
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "visible" && state.focusVisitId) heartbeatFocusVisit();
 });
 
 async function init() {
