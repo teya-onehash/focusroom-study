@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Mellow Commons</title>
+  <desc id="description">A rounded violet and mint M mark.</desc>
+  <defs>
+    <linearGradient id="markGradient" x1="70" y1="52" x2="449" y2="468" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b7adff"/>
+      <stop offset=".5" stop-color="#7461ef"/>
+      <stop offset="1" stop-color="#55d7ad"/>
+    </linearGradient>
+    <radialGradient id="markGlow" cx="0" cy="0" r="1" gradientTransform="translate(132 92) rotate(53) scale(405)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#21175f" flood-opacity=".34"/>
+    </filter>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="148" fill="url(#markGradient)" filter="url(#shadow)"/>
+  <rect x="24" y="24" width="464" height="464" rx="148" fill="url(#markGlow)"/>
+  <path d="M112 352V230c0-65 39-106 97-106s97 42 97 106v122M209 352V246c0-65 39-106 97-106s94 40 94 104v108" fill="none" stroke="#fff" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="365" r="22" fill="#dfffee"/>
+</svg>

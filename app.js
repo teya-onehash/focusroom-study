@@ -1,6 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260925-3";
-import { RealtimeWebRTCSession } from "./rtc-session.js?v=20260925-3";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260928-1";
+import { RealtimeWebRTCSession } from "./rtc-session.js?v=20260928-1";
 
 // Public rooms never reject someone because the room is busy. WebRTC media is
 // divided into small, deterministic circles so the open room can grow without

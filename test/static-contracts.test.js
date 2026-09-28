@@ -9,6 +9,9 @@ const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const buddyMigration = readFileSync(new URL("../supabase/migrations/20260925044500_fix_buddy_study_styles.sql", import.meta.url), "utf8");
 const privacy = readFileSync(new URL("../privacy.html", import.meta.url), "utf8");
 const terms = readFileSync(new URL("../terms.html", import.meta.url), "utf8");
+const manifest = JSON.parse(readFileSync(new URL("../site.webmanifest", import.meta.url), "utf8"));
+const socialPreview = readFileSync(new URL("../assets/social-preview.png", import.meta.url));
+const appleTouchIcon = readFileSync(new URL("../assets/apple-touch-icon.png", import.meta.url));
 
 test("ships no Jitsi runtime or interface references", () => {
   const shipped = [app, config, html, css].join("\n");
@@ -71,4 +74,18 @@ test("Google sign-in uses the official multicolor mark without exposing OAuth se
   ["#4285F4", "#34A853", "#FBBC05", "#EA4335"].forEach((color) => assert.match(app, new RegExp(color)));
   assert.match(app, />Continue with Google<\/span>/);
   assert.doesNotMatch([app, config, html].join("\n"), /client_secret|GOCSPX-/i);
+});
+
+test("social sharing and install metadata use production-sized branded assets", () => {
+  assert.match(html, /property="og:image" content="https:\/\/joinfocusroomlive\.live\/assets\/social-preview\.png"/);
+  assert.match(html, /name="twitter:card" content="summary_large_image"/);
+  assert.match(html, /rel="icon" type="image\/svg\+xml" href="\.\/assets\/favicon\.svg"/);
+  assert.match(html, /rel="apple-touch-icon"/);
+  assert.match(html, /rel="manifest"/);
+  assert.equal(socialPreview.readUInt32BE(16), 1200);
+  assert.equal(socialPreview.readUInt32BE(20), 630);
+  assert.equal(appleTouchIcon.readUInt32BE(16), 180);
+  assert.equal(appleTouchIcon.readUInt32BE(20), 180);
+  assert.equal(manifest.name, "Mellow Commons");
+  assert.equal(manifest.icons.length, 2);
 });
