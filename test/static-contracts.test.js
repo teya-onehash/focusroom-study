@@ -65,3 +65,10 @@ test("production legal pages are public, linked, and WebRTC-aware", () => {
   assert.match(terms, /Do not record/i);
   assert.doesNotMatch(app, /data-privacy|showPrivacy/);
 });
+
+test("Google sign-in uses the official multicolor mark without exposing OAuth secrets", () => {
+  assert.match(app, /class="google-auth-icon"/);
+  ["#4285F4", "#34A853", "#FBBC05", "#EA4335"].forEach((color) => assert.match(app, new RegExp(color)));
+  assert.match(app, />Continue with Google<\/span>/);
+  assert.doesNotMatch([app, config, html].join("\n"), /client_secret|GOCSPX-/i);
+});
