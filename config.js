@@ -11,12 +11,3 @@ export const WEBRTC_ICE_SERVERS = [
 // Optional Supabase Edge Function that returns short-lived { iceServers: [] }.
 // Keep permanent TURN secrets in Edge Function secrets, never in this file.
 export const WEBRTC_TURN_FUNCTION = "";
-
-// Add Stripe-hosted Checkout or Payment Link URLs after the Stripe account is connected.
-// Stripe Checkout can show Apple Pay automatically on supported Apple devices.
-export const CHECKOUT_URLS = {
-  basic_month: "",
-  premium_month: "",
-  premium_year: "",
-  buddy_month: "",
-};

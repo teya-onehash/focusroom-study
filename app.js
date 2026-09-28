@@ -1,5 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, CHECKOUT_URLS, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260928-1";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260928-1";
 import { RealtimeWebRTCSession } from "./rtc-session.js?v=20260928-1";
 
 // Public rooms never reject someone because the room is busy. WebRTC media is
@@ -314,14 +314,15 @@ function pricingCards() {
     { key: "premium_month", name: "Premium", price: "$6.99", unit: "/ month", note: "Private calls", popular:true, annual:true, perks:["Unlimited public focus-room time","Unlimited standard DMs*","Start private audio or video calls from DMs","Host invite-only rooms for up to 6 people","Pin up to 40 study partners","300 encouragements per day"] },
     { key: "buddy_month", name: "Buddy", price: "$12.99", unit: "/ month", note: "For two", perks:["Premium access for you and one friend","Unlimited focus-room time for both","Unlimited standard DMs*","Private audio and video calls","Separate private accounts and histories","One subscription manages both seats"] }
   ];
+  const managedSubscription = state.session && state.subscription && state.subscription.stripe_customer_id && !["canceled", "incomplete_expired"].includes(state.subscription.status);
   return plans.map(function (plan) {
     return '<article class="card price-card' + (plan.popular ? ' popular' : '') + '">' +
       (plan.popular ? '<span class="popular-tag">Recommended</span>' : '') +
       '<span class="eyebrow">' + plan.note + '</span><h3>' + plan.name + '</h3><div class="price">' + plan.price + '<small>' + plan.unit + '</small></div>' +
       (plan.annual ? '<div class="annual-note"><strong>$5.83/month</strong> when billed yearly at $69.96</div>' : '') +
       '<ul class="perk-list">' + plan.perks.map(function (perk) { return '<li>' + perk + '</li>'; }).join("") + '</ul>' +
-      (plan.key === "free" ? '<button class="btn" ' + (state.session ? 'data-view="rooms"' : 'data-auth="signup"') + '>Use Mellow Commons free</button>' : '<button class="btn btn-primary" data-checkout="' + plan.key + '">Choose ' + plan.name + '</button>' + (plan.annual ? '<button class="btn btn-sm annual-button" data-checkout="premium_year">Choose annual Premium</button>' : '')) +
-      (plan.key === "free" ? '<span class="apple-pay">No card required</span>' : '<span class="apple-pay">Secure Stripe checkout · Apple Pay on eligible devices once activated</span>') + '</article>';
+      (plan.key === "free" ? '<button class="btn" ' + (state.session ? 'data-view="rooms"' : 'data-auth="signup"') + '>Use Mellow Commons free</button>' : (managedSubscription ? '<button class="btn btn-primary" data-manage-billing>Manage plan</button>' : '<button class="btn btn-primary" data-checkout="' + plan.key + '">Choose ' + plan.name + '</button>' + (plan.annual ? '<button class="btn btn-sm annual-button" data-checkout="premium_year">Choose annual Premium</button>' : ''))) +
+      (plan.key === "free" ? '<span class="apple-pay">No card required</span>' : '<span class="apple-pay">Secure Stripe checkout · Apple Pay on eligible devices</span>') + '</article>';
   }).join("");
 }
 
@@ -464,7 +465,11 @@ function renderPrivate() {
 
 function renderPlus() {
   const active = state.allowance.plan !== "free";
-  appShell('<div class="page-head"><div><span class="eyebrow">Membership</span><h1>Choose what fits</h1><p>Timers, goals, focus history, ambience, and appearance settings remain available to everyone.</p></div>' + (active ? '<span class="plus-badge">✦ ' + esc(String(state.allowance.plan).toUpperCase()) + ' ACTIVE</span>' : '') + '</div><div class="pricing-grid pricing-four">' + pricingCards() + '</div><p class="plan-fine-print">*Unlimited messaging is intended for normal person-to-person use and remains protected by anti-spam, blocking, reporting, file-size, and safety controls.</p><section class="card social-model-card"><span class="eyebrow">Mellow Commons social model</span><h3>Pin means follow</h3><p>Pinning a member follows their study profile and adds one follower to their count. Unpinning immediately unfollows them. Plan limits control how many people you can pin—not how many followers you can earn.</p></section>', "Membership");
+  const subscription = state.subscription;
+  const periodEnd = subscription && subscription.current_period_end ? new Date(subscription.current_period_end) : null;
+  const periodCopy = periodEnd && !Number.isNaN(periodEnd.getTime()) ? (subscription.cancel_at_period_end ? "Access ends " : "Renews ") + periodEnd.toLocaleDateString([], { month:"short", day:"numeric", year:"numeric" }) : "Managed securely by Stripe";
+  const billingCard = subscription && subscription.stripe_customer_id ? '<section class="card billing-summary"><div><span class="eyebrow">Current membership</span><h3>' + esc(planLabel(state.allowance.plan)) + '</h3><p>' + esc(periodCopy) + ' · ' + esc(String(subscription.status || "active").replaceAll("_", " ")) + '</p></div><button class="btn" data-manage-billing>Manage billing</button></section>' : '';
+  appShell('<div class="page-head"><div><span class="eyebrow">Membership</span><h1>Choose what fits</h1><p>Timers, goals, focus history, ambience, and appearance settings remain available to everyone.</p></div>' + (active ? '<span class="plus-badge">✦ ' + esc(String(state.allowance.plan).toUpperCase()) + ' ACTIVE</span>' : '') + '</div>' + billingCard + '<div class="pricing-grid pricing-four">' + pricingCards() + '</div><p class="plan-fine-print">*Unlimited messaging is intended for normal person-to-person use and remains protected by anti-spam, blocking, reporting, file-size, and safety controls.</p><section class="card social-model-card"><span class="eyebrow">Mellow Commons social model</span><h3>Pin means follow</h3><p>Pinning a member follows their study profile and adds one follower to their count. Unpinning immediately unfollows them. Plan limits control how many people you can pin—not how many followers you can earn.</p></section>', "Membership");
 }
 
 function renderBlog() {
@@ -2432,14 +2437,53 @@ async function searchAdminMembers(form) {
   renderAdmin();
 }
 
-function checkout(interval) {
-  const url = CHECKOUT_URLS[interval];
-  if (!url) {
-    const labels = { basic_month:"Basic · $1.99 monthly", premium_month:"Premium · $6.99 monthly", premium_year:"Premium · $69.96 yearly ($5.83/month)", buddy_month:"Buddy · $12.99 monthly" };
-    showModal("Checkout is being connected", '<p>The new membership prices are set. Payment collection stays disabled until the matching Stripe recurring prices and verified business profile are connected.</p><p>When activated, Stripe Checkout can show Apple Pay automatically on eligible Apple devices.</p><div class="card"><strong>Selected plan</strong><p>' + esc(labels[interval] || "Membership") + '</p></div><button class="btn btn-primary" data-close-modal>Got it</button>');
-    return;
+async function edgeFunctionError(error, fallback) {
+  try {
+    if (error && error.context && typeof error.context.json === "function") {
+      const payload = await error.context.json();
+      if (payload && payload.error) return String(payload.error);
+    }
+  } catch (ignored) {}
+  return fallback;
+}
+
+async function checkout(interval, button) {
+  if (!state.session) {
+    state.authMode = "signup";
+    renderAuth();
+    return showToast("Create or log in to your account before choosing a plan.");
   }
-  location.href = url;
+  const original = button && button.textContent;
+  if (button) { button.disabled = true; button.textContent = "Opening Stripe…"; }
+  const result = await supabase.functions.invoke("create-checkout", { body:{ plan:interval } });
+  if (result.error || !result.data || !result.data.url) {
+    if (button) { button.disabled = false; button.textContent = original; }
+    const message = await edgeFunctionError(result.error, "Secure checkout is not available yet. No payment was taken.");
+    return showToast(message, true);
+  }
+  location.assign(result.data.url);
+}
+
+async function openBillingPortal(button) {
+  const original = button && button.textContent;
+  if (button) { button.disabled = true; button.textContent = "Opening Stripe…"; }
+  const result = await supabase.functions.invoke("create-portal", { body:{} });
+  if (result.error || !result.data || !result.data.url) {
+    if (button) { button.disabled = false; button.textContent = original; }
+    const message = await edgeFunctionError(result.error, "Billing management is unavailable right now. Please try again.");
+    return showToast(message, true);
+  }
+  location.assign(result.data.url);
+}
+
+function consumeBillingReturn() {
+  const url = new URL(location.href);
+  const billing = url.searchParams.get("billing");
+  if (!billing) return null;
+  url.searchParams.delete("billing");
+  url.searchParams.delete("session_id");
+  history.replaceState({}, "", url.pathname + (url.search ? url.search : "") + url.hash);
+  return billing;
 }
 
 function showBlog(id) {
@@ -2562,7 +2606,8 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.boost) await sendEncouragement(target.dataset.boost, "focus_boost");
   if (target.dataset.joinPrivate) await joinPrivateRoom(target.dataset.joinPrivate);
   if (target.dataset.copyInvite) await copyInvite(target.dataset.copyInvite);
-  if (target.dataset.checkout) checkout(target.dataset.checkout);
+  if (target.dataset.checkout) await checkout(target.dataset.checkout, target);
+  if (target.dataset.manageBilling !== undefined) await openBillingPortal(target);
   if (target.dataset.blog) showBlog(target.dataset.blog);
   if (target.dataset.themeToggle !== undefined) setTheme(state.theme === "dark" ? "light" : "dark");
   if (target.dataset.theme) setTheme(target.dataset.theme);
@@ -2689,7 +2734,12 @@ async function init() {
   state.session = current.data.session;
   state.user = state.session && state.session.user;
   if (state.session) await loadUserData();
+  const billingReturn = consumeBillingReturn();
+  if (billingReturn && state.session) state.view = "plus";
   renderApp();
+  if (billingReturn === "success") showToast("Payment received. Your membership will update as soon as Stripe confirms it.");
+  if (billingReturn === "cancelled") showToast("Checkout cancelled. No payment was taken.");
+  if (billingReturn === "portal") showToast("Billing settings updated.");
   if (state.session) { subscribeToDmCalls(); notifyNextIncomingCall(); }
   supabase.auth.onAuthStateChange(function (event, session) {
     setTimeout(async function () {

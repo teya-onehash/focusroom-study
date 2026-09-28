@@ -12,6 +12,11 @@ const terms = readFileSync(new URL("../terms.html", import.meta.url), "utf8");
 const manifest = JSON.parse(readFileSync(new URL("../site.webmanifest", import.meta.url), "utf8"));
 const socialPreview = readFileSync(new URL("../assets/social-preview.png", import.meta.url));
 const appleTouchIcon = readFileSync(new URL("../assets/apple-touch-icon.png", import.meta.url));
+const checkoutFunction = readFileSync(new URL("../supabase/functions/create-checkout/index.ts", import.meta.url), "utf8");
+const portalFunction = readFileSync(new URL("../supabase/functions/create-portal/index.ts", import.meta.url), "utf8");
+const webhookFunction = readFileSync(new URL("../supabase/functions/stripe-webhook/index.ts", import.meta.url), "utf8");
+const stripeMigration = readFileSync(new URL("../supabase/migrations/20260928164134_stripe_subscription_sync.sql", import.meta.url), "utf8");
+const functionConfig = readFileSync(new URL("../supabase/config.toml", import.meta.url), "utf8");
 
 test("ships no Jitsi runtime or interface references", () => {
   const shipped = [app, config, html, css].join("\n");
@@ -88,4 +93,19 @@ test("social sharing and install metadata use production-sized branded assets", 
   assert.equal(appleTouchIcon.readUInt32BE(20), 180);
   assert.equal(manifest.name, "Mellow Commons");
   assert.equal(manifest.icons.length, 2);
+});
+
+test("Stripe billing stays server-side and derives entitlements from signed webhooks", () => {
+  assert.match(app, /supabase\.functions\.invoke\("create-checkout"/);
+  assert.match(app, /supabase\.functions\.invoke\("create-portal"/);
+  assert.doesNotMatch([app, config, html].join("\n"), /sk_(?:test|live)_|whsec_|STRIPE_SECRET_KEY|SERVICE_ROLE/i);
+  assert.match(checkoutFunction, /client_reference_id: user\.id/);
+  assert.match(checkoutFunction, /subscription_data:/);
+  assert.match(portalFunction, /billingPortal\.sessions\.create/);
+  assert.match(webhookFunction, /req\.text\(\)/);
+  assert.match(webhookFunction, /constructEventAsync/);
+  assert.match(webhookFunction, /sync_stripe_subscription/);
+  assert.match(stripeMigration, /to service_role/);
+  assert.match(stripeMigration, /revoke all on function public\.sync_stripe_subscription[\s\S]*from public, anon, authenticated/);
+  assert.match(functionConfig, /\[functions\.stripe-webhook\][\s\S]*verify_jwt = false/);
 });
