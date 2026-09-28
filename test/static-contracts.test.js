@@ -7,6 +7,8 @@ const config = readFileSync(new URL("../config.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const buddyMigration = readFileSync(new URL("../supabase/migrations/20260925044500_fix_buddy_study_styles.sql", import.meta.url), "utf8");
+const privacy = readFileSync(new URL("../privacy.html", import.meta.url), "utf8");
+const terms = readFileSync(new URL("../terms.html", import.meta.url), "utf8");
 
 test("ships no Jitsi runtime or interface references", () => {
   const shipped = [app, config, html, css].join("\n");
@@ -51,4 +53,15 @@ test("public occupancy reuses the subscribed count channel", () => {
   assert.match(app, /roomCountReady/);
   assert.match(app, /const readyChannel = state\.roomCountReady\[room\.slug\]/);
   assert.doesNotMatch(app, /state\.presenceChannel = supabase\.channel\(channelName/);
+});
+
+test("production legal pages are public, linked, and WebRTC-aware", () => {
+  assert.match(app, /href="\.\/privacy\.html"/);
+  assert.match(app, /href="\.\/terms\.html"/);
+  assert.match(privacy, /Effective September 28, 2026/);
+  assert.match(privacy, /WebRTC/);
+  assert.match(privacy, /not recorded or stored/i);
+  assert.match(terms, /Effective September 28, 2026/);
+  assert.match(terms, /Do not record/i);
+  assert.doesNotMatch(app, /data-privacy|showPrivacy/);
 });
