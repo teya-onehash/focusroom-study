@@ -42,9 +42,12 @@ export class RealtimeWebRTCSession {
     this.peers = new Map();
     this.presence = new Map();
     this.allowedPeerIds = new Set();
+    this.departedPeerIds = new Set();
     this.hasPresenceSync = false;
     this.started = false;
     this.stopping = false;
+    this.stopPromise = null;
+    this.subscribeTimeoutMs = Math.max(50, Number(options.subscribeTimeoutMs || 15000));
   }
 
   async start() {
@@ -79,7 +82,8 @@ export class RealtimeWebRTCSession {
         }
       });
 
-      this.channel
+      const channel = this.channel;
+      channel
         .on("broadcast", { event: "webrtc" }, function (message) {
           self.handleSignal(message && (message.payload || message));
         })
@@ -90,14 +94,43 @@ export class RealtimeWebRTCSession {
         })
         .on("presence", { event: "sync" }, function () {
           self.syncPresence();
-        })
-        .subscribe(async function (status, error) {
-          self.onStatus(status, error || null);
-          if (status === "SUBSCRIBED" && self.channel) {
-            await self.channel.track(self.localPresence);
-            await self.sendSignal("ready", null, { presence: self.localPresence });
+        });
+
+      await new Promise(function (resolve, reject) {
+        let settled = false;
+        const timeout = setTimeout(function () {
+          if (settled) return;
+          settled = true;
+          reject(new Error("The secure signaling channel timed out."));
+        }, self.subscribeTimeoutMs);
+        const finish = function (callback, value) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          callback(value);
+        };
+
+        channel.subscribe(function (status, error) {
+          if (self.channel !== channel || self.stopping) return;
+          try { self.onStatus(status, error || null); } catch (callbackError) {}
+          if (status === "SUBSCRIBED") {
+            Promise.resolve().then(async function () {
+              if (self.channel !== channel || self.stopping) throw new Error("The signaling session was closed.");
+              await channel.track(self.localPresence);
+              await self.sendSignal("ready", null, { presence: self.localPresence });
+            }).then(function () {
+              finish(resolve);
+            }).catch(function (subscribeError) {
+              if (!settled) finish(reject, subscribeError);
+              else {
+                try { self.onStatus("CHANNEL_ERROR", subscribeError); } catch (callbackError) {}
+              }
+            });
+          } else if (!settled && (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED")) {
+            finish(reject, error || new Error("The secure signaling channel could not open."));
           }
         });
+      });
     } catch (error) {
       const failedChannel = this.channel;
       this.channel = null;
@@ -117,6 +150,9 @@ export class RealtimeWebRTCSession {
     const completePresence = new Map(all);
     all.delete(this.clientId);
     this.presence = all;
+    for (const departedId of this.departedPeerIds) {
+      if (!completePresence.has(departedId)) this.departedPeerIds.delete(departedId);
+    }
 
     const seenUsers = new Set();
     const localUserId = this.localPresence.user_id;
@@ -185,7 +221,8 @@ export class RealtimeWebRTCSession {
       polite: this.clientId > peerId,
       candidates: [],
       remoteStream: new MediaStream(),
-      restartTimer: null
+      restartTimer: null,
+      lastReportedState: null
     };
     this.peers.set(peerId, peer);
 
@@ -206,17 +243,29 @@ export class RealtimeWebRTCSession {
       }
       self.onRemoteStream(peerId, peer.remoteStream, peer.metadata, event.track);
     };
-    pc.onconnectionstatechange = function () {
-      const status = pc.connectionState;
-      self.onPeerState(peerId, status, peer.metadata);
+    const handleConnectionState = function (status) {
+      const normalized = status === "completed" ? "connected" : (status === "checking" ? "connecting" : status);
+      if (peer.lastReportedState !== normalized) {
+        peer.lastReportedState = normalized;
+        self.onPeerState(peerId, normalized, peer.metadata);
+      }
       clearTimeout(peer.restartTimer);
-      if (status === "failed" || status === "disconnected") {
+      if (normalized === "failed" || normalized === "disconnected") {
         peer.restartTimer = setTimeout(function () {
           if (!self.peers.has(peerId) || pc.connectionState === "connected") return;
           if (self.clientId < peerId) self.negotiate(peerId, true);
-        }, status === "failed" ? 500 : 3500);
+        }, normalized === "failed" ? 500 : 3500);
       }
-      if (status === "closed") self.removePeer(peerId, false);
+      if (normalized === "closed") self.removePeer(peerId, false);
+    };
+    pc.onconnectionstatechange = function () {
+      handleConnectionState(pc.connectionState);
+    };
+    pc.oniceconnectionstatechange = function () {
+      const iceState = pc.iceConnectionState;
+      if (iceState === "failed" || iceState === "disconnected" || iceState === "connected" || iceState === "completed") {
+        handleConnectionState(iceState);
+      }
     };
     pc.onnegotiationneeded = function () {
       if (self.clientId < peerId) self.negotiate(peerId);
@@ -243,6 +292,12 @@ export class RealtimeWebRTCSession {
   async handleSignal(signal) {
     if (!signal || signal.from === this.clientId || (signal.to && signal.to !== this.clientId)) return;
     const peerId = signal.from;
+    if (signal.kind === "leave") {
+      this.departedPeerIds.add(peerId);
+      this.removePeer(peerId);
+      return;
+    }
+    if (this.departedPeerIds.has(peerId)) return;
     if (this.hasPresenceSync && !this.allowedPeerIds.has(peerId)) return;
     const peer = this.ensurePeer(peerId, signal.presence || this.presence.get(peerId) || {});
     if (!peer) return;
@@ -270,7 +325,6 @@ export class RealtimeWebRTCSession {
         else peer.candidates.push(signal.candidate);
         return;
       }
-      if (signal.kind === "leave") this.removePeer(peerId);
     } catch (error) {
       if (!peer.ignoreOffer) this.onPeerState(peerId, "error", peer.metadata, error);
     }
@@ -312,19 +366,30 @@ export class RealtimeWebRTCSession {
 
   async replaceTrack(kind, nextTrack) {
     const previous = this.localStream.getTracks().find(function (track) { return track.kind === kind; });
-    if (previous && previous !== nextTrack) {
-      this.localStream.removeTrack(previous);
-      previous.stop();
-    }
-    if (nextTrack && !this.localStream.getTracks().includes(nextTrack)) this.localStream.addTrack(nextTrack);
-    const jobs = [];
+    if (previous === nextTrack) return;
+    const senders = [];
     this.peers.forEach(function (peer) {
       const transceiver = peer.pc.getTransceivers().find(function (item) {
         return (item.sender.track && item.sender.track.kind === kind) || (item.receiver.track && item.receiver.track.kind === kind);
       });
-      if (transceiver) jobs.push(transceiver.sender.replaceTrack(nextTrack || null));
+      if (transceiver) senders.push(transceiver.sender);
     });
-    await Promise.all(jobs);
+    const results = await Promise.allSettled(senders.map(function (sender) {
+      return sender.replaceTrack(nextTrack || null);
+    }));
+    const failure = results.find(function (result) { return result.status === "rejected"; });
+    if (failure) {
+      await Promise.allSettled(senders.map(function (sender, index) {
+        return results[index].status === "fulfilled" ? sender.replaceTrack(previous || null) : Promise.resolve();
+      }));
+      if (nextTrack && nextTrack !== previous) nextTrack.stop();
+      throw failure.reason;
+    }
+    if (previous) {
+      this.localStream.removeTrack(previous);
+      previous.stop();
+    }
+    if (nextTrack && !this.localStream.getTracks().includes(nextTrack)) this.localStream.addTrack(nextTrack);
   }
 
   setTrackEnabled(kind, enabled) {
@@ -340,29 +405,44 @@ export class RealtimeWebRTCSession {
     peer.pc.ontrack = null;
     peer.pc.onicecandidate = null;
     peer.pc.onconnectionstatechange = null;
+    peer.pc.oniceconnectionstatechange = null;
     peer.pc.onnegotiationneeded = null;
     peer.pc.close();
+    if (peer.remoteStream) peer.remoteStream.getTracks().forEach(function (track) {
+      try { track.stop(); } catch (error) {}
+    });
     this.peers.delete(peerId);
     if (notify !== false) this.onPeerState(peerId, "left", peer.metadata);
   }
 
   async stop(options) {
-    if (this.stopping) return;
-    this.stopping = true;
-    const notify = !options || options.notify !== false;
-    if (notify) await this.sendSignal("leave");
-    if (this.channel) {
-      try { await this.channel.untrack(); } catch (error) {}
-      const channel = this.channel;
-      this.channel = null;
-      await this.supabase.removeChannel(channel);
-    }
-    Array.from(this.peers.keys()).forEach(this.removePeer.bind(this));
-    this.presence.clear();
-    this.allowedPeerIds.clear();
-    this.hasPresenceSync = false;
-    this.started = false;
-    this.stopping = false;
+    if (this.stopPromise) return this.stopPromise;
+    const self = this;
+    this.stopPromise = (async function () {
+      self.stopping = true;
+      try {
+        const notify = !options || options.notify !== false;
+        if (notify) {
+          try { await self.sendSignal("leave"); } catch (error) {}
+        }
+        if (self.channel) {
+          try { await self.channel.untrack(); } catch (error) {}
+          const channel = self.channel;
+          self.channel = null;
+          try { await self.supabase.removeChannel(channel); } catch (error) {}
+        }
+      } finally {
+        Array.from(self.peers.keys()).forEach(self.removePeer.bind(self));
+        self.presence.clear();
+        self.allowedPeerIds.clear();
+        self.departedPeerIds.clear();
+        self.hasPresenceSync = false;
+        self.started = false;
+        self.stopping = false;
+      }
+    }());
+    try { await this.stopPromise; }
+    finally { this.stopPromise = null; }
   }
 }
 

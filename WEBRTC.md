@@ -34,6 +34,18 @@ Never put a permanent TURN shared secret, Supabase service-role key, or provider
 
 Realtime Authorization policies on `realtime.messages` validate the authenticated user against the public-room visit, private-room membership, or DM-call participants before allowing Broadcast or Presence access.
 
+The separate public occupancy channel exposes only a room-specific SHA-256 member key, not an account ID or display name. That opaque key lets the browser collapse duplicate tabs while keeping public room counts accurate.
+
+## Lifecycle safeguards
+
+- Initial joins wait for an authenticated Realtime subscription and Presence track before reporting success.
+- Offers use deterministic perfect negotiation; early ICE candidates queue until the remote description exists.
+- Both peer-connection and ICE state changes drive reconnect status and initiator-only ICE restarts.
+- Camera and microphone replacement is atomic across senders; a failed swap rolls connected peers back and stops the unused new track.
+- Device removal clears the dead sender so the same control can request a replacement device.
+- Leave and failure paths untrack Presence, remove the Realtime channel, close every peer connection, stop remote playback tracks, and let the app stop all local media tracks.
+- Duplicate tabs are collapsed to one account per room, and late candidates cannot recreate a peer after its leave signal.
+
 ## Public room scale
 
 Public study rooms have no application-level participant cap. Realtime Presence keeps the full authenticated room roster and connected count, including when more people are present than can safely share media in a browser mesh.

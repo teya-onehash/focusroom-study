@@ -60,6 +60,8 @@ test("top navigation uses a styled accessible SVG chat control", () => {
 test("public occupancy reuses the subscribed count channel", () => {
   assert.match(app, /roomCountReady/);
   assert.match(app, /const readyChannel = state\.roomCountReady\[room\.slug\]/);
+  assert.match(app, /member_key:await publicPresenceKey/);
+  assert.doesNotMatch(app, /readyChannel\.track\(\{ user_id:/);
   assert.doesNotMatch(app, /state\.presenceChannel = supabase\.channel\(channelName/);
 });
 

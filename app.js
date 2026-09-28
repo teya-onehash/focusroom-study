@@ -195,6 +195,14 @@ function stickerGlyph(name) {
   return ({ moon:"☾", sprout:"🌱", sparkles:"✦", books:"📚", coffee:"☕", flower:"✿" })[name] || "";
 }
 
+async function publicPresenceKey(roomId, userId) {
+  const value = new TextEncoder().encode(String(roomId) + ":" + String(userId));
+  const digest = await crypto.subtle.digest("SHA-256", value);
+  return Array.from(new Uint8Array(digest)).slice(0, 18).map(function (byte) {
+    return byte.toString(16).padStart(2, "0");
+  }).join("");
+}
+
 function brandLogo() {
   return '<span class="brand-logo" aria-hidden="true"><svg viewBox="0 0 64 64" role="img"><defs><linearGradient id="mellowMark" x1="9" y1="8" x2="56" y2="58" gradientUnits="userSpaceOnUse"><stop stop-color="#a99cff"/><stop offset=".55" stop-color="#7461ef"/><stop offset="1" stop-color="#55d7ad"/></linearGradient></defs><rect x="3" y="3" width="58" height="58" rx="19" fill="url(#mellowMark)"/><path d="M14 43V28c0-8 4.8-13 12-13s12 5.2 12 13v15M26 43V30c0-8 4.8-13 12-13s12 5 12 13v13" fill="none" stroke="white" stroke-width="5.2" stroke-linecap="round"/><circle cx="32" cy="44" r="3.2" fill="#dfffee"/></svg></span>';
 }
@@ -769,14 +777,17 @@ async function subscribeRoomCounts() {
       const presence = channel.presenceState();
       const connectedUsers = new Set();
       Object.values(presence).forEach(function (entries) {
-        entries.forEach(function (entry) { if (entry && entry.user_id) connectedUsers.add(entry.user_id); });
+        entries.forEach(function (entry) {
+          const memberKey = entry && (entry.member_key || entry.user_id);
+          if (memberKey) connectedUsers.add(memberKey);
+        });
       });
       state.roomCounts[room.slug] = connectedUsers.size;
       const countEls = document.querySelectorAll('[data-room-count="' + room.slug + '"]');
       countEls.forEach(function (el) { el.textContent = state.roomCounts[room.slug]; });
     }).subscribe(function (status) {
       if (status === "SUBSCRIBED") markReady(channel);
-      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") markReady(null);
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") state.roomCounts[room.slug] = 0;
     });
     state.channels.push(channel);
   });
@@ -1539,7 +1550,15 @@ function watchLocalTrack(track) {
     if (!state.localCallStream || !state.localCallStream.getTracks().includes(track)) return;
     const label = track.kind === "video" ? "Camera" : "Microphone";
     showToast(label + " disconnected. Choose another device to continue.", true);
-    if (state.rtcSession) await state.rtcSession.updatePresence(track.kind === "video" ? { camera:false } : { microphone:false });
+    if (state.rtcSession) {
+      try { await state.rtcSession.replaceTrack(track.kind, null); } catch (error) {
+        state.localCallStream?.removeTrack(track);
+        try { track.stop(); } catch (stopError) {}
+      }
+      await state.rtcSession.updatePresence(track.kind === "video" ? { camera:false } : { microphone:false });
+    } else {
+      state.localCallStream?.removeTrack(track);
+    }
     if (document.querySelector(".study-stream")) renderRoomGrid();
     if (document.querySelector(".social-call-page") && track.kind === "video") document.querySelector(".local-call-card")?.classList.add("camera-off");
   };
@@ -1923,14 +1942,23 @@ async function startNativeCallConnection(room, audioOnly, outgoing) {
     onEvent:function (kind) { if (kind === "hangup") leaveMeeting(false); },
     onStatus:function (status) {
       if (status === "SUBSCRIBED") setSocialCallStatus(outgoing ? "Calling…" : "Connecting…");
-      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
         setSocialCallStatus("Secure connection unavailable");
         showToast("The private call could not open its secure signaling channel. End it and try again.", true);
       }
     }
   });
   state.rtcSession = session;
-  await session.start();
+  try {
+    await session.start();
+  } catch (error) {
+    if (state.rtcSession === session) state.rtcSession = null;
+    await session.stop({ notify:false }).catch(function () {});
+    stream.getTracks().forEach(function (track) { track.stop(); });
+    if (state.localCallStream === stream) state.localCallStream = null;
+    setSocialCallStatus("Call could not connect");
+    showToast("The secure call connection could not start. End the call and try again.", true);
+  }
 }
 
 function roomPresence(options) {
@@ -2235,7 +2263,7 @@ async function mountMeeting(room, isPrivate, joinOptions) {
             showToast("The live room count is reconnecting. Your study stream is still active.", true);
           });
         }
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           if (label) label.textContent = "Connection interrupted";
           showToast("The secure room connection was interrupted. Rejoin the room to try again.", true);
         }
@@ -2264,10 +2292,13 @@ async function trackPresence(room, isPrivate) {
   // Public occupancy reuses the already-subscribed lobby channel because
   // supabase-js intentionally returns one channel object per topic.
   if (isPrivate) return;
-  const readyChannel = state.roomCountReady[room.slug] ? await state.roomCountReady[room.slug] : null;
+  const readyChannel = state.roomCountReady[room.slug] ? await Promise.race([
+    state.roomCountReady[room.slug],
+    new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 6000); })
+  ]) : null;
   if (!readyChannel) throw new Error("Room count channel unavailable");
   state.presenceChannel = readyChannel;
-  await readyChannel.track({ user_id:state.user.id, display_name:state.profile.display_name, joined_at:new Date().toISOString() });
+  await readyChannel.track({ member_key:await publicPresenceKey(room.id, state.user.id), joined_at:new Date().toISOString() });
 }
 
 async function leaveMeeting(endCall) {
@@ -2722,9 +2753,13 @@ window.addEventListener("beforeunload", function () {
   stopAmbient();
 });
 
-window.addEventListener("online", function () { if (state.focusVisitId) heartbeatFocusVisit(); });
+window.addEventListener("online", function () {
+  if (state.focusVisitId) heartbeatFocusVisit();
+  if (state.rtcSession) state.rtcSession.updatePresence({}).catch(function () {});
+});
 document.addEventListener("visibilitychange", function () {
   if (document.visibilityState === "visible" && state.focusVisitId) heartbeatFocusVisit();
+  if (document.visibilityState === "visible" && state.rtcSession) state.rtcSession.updatePresence({}).catch(function () {});
 });
 
 async function init() {
