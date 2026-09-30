@@ -7,6 +7,7 @@ const config = readFileSync(new URL("../config.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
 const buddyMigration = readFileSync(new URL("../supabase/migrations/20260925044500_fix_buddy_study_styles.sql", import.meta.url), "utf8");
+const studyForumMigration = readFileSync(new URL("../supabase/migrations/20260930090922_study_groups_forum.sql", import.meta.url), "utf8");
 const privacy = readFileSync(new URL("../privacy.html", import.meta.url), "utf8");
 const terms = readFileSync(new URL("../terms.html", import.meta.url), "utf8");
 const manifest = JSON.parse(readFileSync(new URL("../site.webmanifest", import.meta.url), "utf8"));
@@ -17,6 +18,10 @@ const portalFunction = readFileSync(new URL("../supabase/functions/create-portal
 const webhookFunction = readFileSync(new URL("../supabase/functions/stripe-webhook/index.ts", import.meta.url), "utf8");
 const stripeMigration = readFileSync(new URL("../supabase/migrations/20260928164134_stripe_subscription_sync.sql", import.meta.url), "utf8");
 const functionConfig = readFileSync(new URL("../supabase/config.toml", import.meta.url), "utf8");
+const ambienceFiles = ["rain", "cafe", "fire"].flatMap((name) => [
+  readFileSync(new URL(`../assets/audio/${name}.ogg`, import.meta.url)),
+  readFileSync(new URL(`../assets/audio/${name}.m4a`, import.meta.url))
+]);
 
 test("ships no Jitsi runtime or interface references", () => {
   const shipped = [app, config, html, css].join("\n");
@@ -34,6 +39,36 @@ test("study-buddy form values match the database contract", () => {
     assert.match(app, new RegExp('option value="' + style.replace("-", "\\-") + '"'));
     assert.match(buddyMigration, new RegExp("'" + style.replace("-", "\\-") + "'"));
   });
+});
+
+test("study groups add secure major-based Q&A without bypassing privacy controls", () => {
+  assert.match(app, /list_study_group_posts/);
+  assert.match(app, /create_study_group_post/);
+  assert.match(app, /toggle_study_post_vote/);
+  assert.match(app, /create_study_post_comment/);
+  assert.match(app, /For you/);
+  ["group", "question", "tip"].forEach((kind) => assert.match(studyForumMigration, new RegExp("'" + kind + "'")));
+  ["study_post_votes", "study_post_comments", "study_group_members"].forEach((table) => {
+    assert.match(studyForumMigration, new RegExp("alter table public\\." + table + " enable row level security"));
+    assert.match(studyForumMigration, new RegExp("revoke all on table public\\." + table + " from public, anon, authenticated"));
+  });
+  assert.match(studyForumMigration, /not exists \([\s\S]*from public\.user_blocks/);
+  assert.match(studyForumMigration, /p\.show_profile or b\.author_id = caller_id/);
+  assert.ok((studyForumMigration.match(/caller_id is null/g) || []).length >= 8);
+  assert.doesNotMatch(studyForumMigration, /grant (?:select|insert|update|delete|all) on (?:table )?public\.study_/i);
+});
+
+test("ambience uses substantial stereo assets with Safari-compatible fallbacks", () => {
+  assert.match(app, /assets\/audio/);
+  assert.match(app, /audio\/ogg/);
+  assert.match(app, /"m4a"/);
+  assert.match(app, /data-ambient-volume/);
+  ambienceFiles.forEach((file) => assert.ok(file.length > 200_000));
+  for (let index = 0; index < ambienceFiles.length; index += 2) {
+    assert.equal(ambienceFiles[index].subarray(0, 4).toString(), "OggS");
+    assert.equal(ambienceFiles[index + 1].subarray(4, 8).toString(), "ftyp");
+    assert.ok(ambienceFiles[index + 1].indexOf(Buffer.from("moov")) > 0);
+  }
 });
 
 test("all production assets use one cache version", () => {

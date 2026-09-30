@@ -1,6 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm";
-import { SUPABASE_URL, SUPABASE_ANON_KEY, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260928-1";
-import { RealtimeWebRTCSession } from "./rtc-session.js?v=20260928-1";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, WEBRTC_ICE_SERVERS, WEBRTC_TURN_FUNCTION } from "./config.js?v=20260930-1";
+import { RealtimeWebRTCSession } from "./rtc-session.js?v=20260930-1";
 
 // Public rooms never reject someone because the room is busy. WebRTC media is
 // divided into small, deterministic circles so the open room can grow without
@@ -85,6 +85,10 @@ const state = {
   feedbackSearch: "",
   buddyPosts: [],
   buddySearch: "",
+  buddySort: "for-you",
+  buddyMajor: "all",
+  studyComments: [],
+  activeStudyPostId: null,
   presenceChannel: null,
   view: "home",
   activeRoom: null,
@@ -124,6 +128,7 @@ const state = {
   timerRunning: false,
   timerId: null,
   ambient: "none",
+  ambientVolume: Math.min(1, Math.max(0, Number(localStorage.getItem("mellow-ambient-volume") || .48))),
   theme: document.documentElement.dataset.theme || "dark",
   audio: null,
   authMode: "signup",
@@ -279,6 +284,7 @@ function closeModal() {
   state.pendingRoom = null;
   state.pendingPrivate = false;
   state.pendingDmStart = null;
+  state.activeStudyPostId = null;
   modalRoot.innerHTML = "";
 }
 
@@ -350,7 +356,7 @@ function renderLanding() {
     '<div class="hero-visual product-preview" aria-label="Mellow Commons product preview"><div class="preview-top"><div><span class="eyebrow">Live focus floor</span><h2>Choose your room</h2></div><span class="online-pill"><i></i>' + totalOnline + ' online</span></div><div class="preview-intention"><span>Today’s intention</span><strong>Finish one clear task</strong><div class="preview-progress"><i></i></div></div><div class="preview-room-list">' + (previewRooms || '<div class="skeleton"></div>') + '</div><div class="preview-footer"><span>25</span><span class="active">50</span><span>90 min</span><button class="btn btn-primary btn-sm" data-auth="signup">Start session</button></div></div></section>' +
     '<section class="section" id="rooms"><div class="section-head"><div><span class="eyebrow">Live rooms · no join limit</span><h2>Find your focus atmosphere</h2></div><p>Public rooms stay open as the community grows. Every number is based on people actually connected through live Presence.</p></div><div class="room-grid">' + roomCards(true) + '</div></section>' +
     '<section class="section session-steps"><div class="section-head"><div><span class="eyebrow">A real session, not another feed</span><h2>From intention to finished work</h2></div></div><div class="grid-3"><article class="card step-card"><span>01</span><h3>Name the task</h3><p>Write one concrete intention and choose a preset or your own focus duration.</p></article><article class="card step-card"><span>02</span><h3>Check your setup</h3><p>Preview video, confirm microphone activity, and choose the exact devices you want.</p></article><article class="card step-card"><span>03</span><h3>Focus with others</h3><p>Join muted or camera-off, use the timer, and save finished sessions to your history.</p></article></div></section>' +
-    '<section class="section" id="features"><div class="section-head"><div><span class="eyebrow">Made for momentum</span><h2>More than a video call</h2></div></div><div class="bento"><article class="card feature-card"><div class="feature-icon">◷</div><div><h3>Focus timer and goals</h3><p>Choose a preset or custom duration, write the next task, and save completed sessions to your history.</p></div></article><article class="card feature-card"><div class="feature-icon">♡</div><div><h3>Real encouragement</h3><p>Send thoughtful support to people who are showing up. Daily allowances scale with your membership.</p></div></article><article class="card feature-card"><div class="feature-icon">☾</div><div><h3>Cozy ambience</h3><p>Use generated rain, café, or fireside sound without opening another distracting tab.</p></div></article></div></section>' +
+    '<section class="section" id="features"><div class="section-head"><div><span class="eyebrow">Made for momentum</span><h2>More than a video call</h2></div></div><div class="bento"><article class="card feature-card"><div class="feature-icon">◷</div><div><h3>Focus timer and goals</h3><p>Choose a preset or custom duration, write the next task, and save completed sessions to your history.</p></div></article><article class="card feature-card"><div class="feature-icon">♡</div><div><h3>Real encouragement</h3><p>Send thoughtful support to people who are showing up. Daily allowances scale with your membership.</p></div></article><article class="card feature-card"><div class="feature-icon">☾</div><div><h3>Cozy ambience</h3><p>Play layered stereo rain, café, or fireside sound with your own volume level—without opening another distracting tab.</p></div></article></div></section>' +
     '<section class="section" id="pricing"><div class="section-head"><div><span class="eyebrow">Simple student pricing</span><h2>Free for focus. Upgrade for connection.</h2></div><p>Public-room time scales by plan. Private audio and video calls are reserved for Premium and Buddy.</p></div><div class="pricing-grid pricing-four">' + pricingCards() + '</div><p class="plan-fine-print">*Unlimited messaging is intended for normal person-to-person use and remains protected by anti-spam, blocking, reporting, file-size, and safety controls.</p></section>' +
     '<section class="section" id="journal"><div class="section-head"><div><span class="eyebrow">Focus journal</span><h2>Small ideas that help</h2></div></div><div class="grid-3">' + blogCards() + '</div></section></main>' +
     '<footer class="footer"><div><button class="brand brand-button" data-public-home>' + brandLogo() + '<span>Mellow Commons</span></button><p>Study together without the pressure.</p></div><div class="footer-links"><a href="./privacy.html">Privacy</a><a href="./terms.html">Terms</a><button class="btn btn-sm" data-auth="login">Member login</button></div></footer></div>';
@@ -367,7 +373,7 @@ function renderAuth() {
 function navItems() {
   const items = [
     ["home","⌂","Home"], ["rooms","◎","Study rooms"], ["goals","✓","Goals & progress"],
-    ["encouragements","♡","Community"], ["buddies","♧","Study buddies"], ["community","◌","Conversations"],
+    ["encouragements","♡","Community"], ["buddies","♧","Study groups"], ["community","◌","Conversations"],
     ["blog","▤","Focus journal"], ["feedback","△","Feedback"]
   ];
   if (state.admin && state.admin.is_admin) items.push(["admin","◆","Admin center"]);
@@ -395,7 +401,8 @@ function appShell(content, title) {
 }
 
 function ambientDock() {
-  return '<div class="ambient-dock" aria-label="Focus ambience"><button data-ambient="none" class="' + (state.ambient === "none" ? "active" : "") + '">Quiet</button><button data-ambient="rain" class="' + (state.ambient === "rain" ? "active" : "") + '">🌧 Rain</button><button data-ambient="cafe" class="' + (state.ambient === "cafe" ? "active" : "") + '">☕ Café</button><button data-ambient="fire" class="' + (state.ambient === "fire" ? "active" : "") + '">🔥 Fire</button></div>';
+  const level = Math.round(state.ambientVolume * 100);
+  return '<div class="ambient-dock" aria-label="Focus ambience"><span class="ambient-label">Soundscape</span><div class="ambient-choices"><button data-ambient="none" class="' + (state.ambient === "none" ? "active" : "") + '" aria-pressed="' + String(state.ambient === "none") + '">Quiet</button><button data-ambient="rain" class="' + (state.ambient === "rain" ? "active" : "") + '" aria-pressed="' + String(state.ambient === "rain") + '">🌧 Rain</button><button data-ambient="cafe" class="' + (state.ambient === "cafe" ? "active" : "") + '" aria-pressed="' + String(state.ambient === "cafe") + '">☕ Café</button><button data-ambient="fire" class="' + (state.ambient === "fire" ? "active" : "") + '" aria-pressed="' + String(state.ambient === "fire") + '">🔥 Fire</button></div><label class="ambient-volume" title="Soundscape volume"><span aria-hidden="true">' + (level === 0 ? '🔇' : '◖') + '</span><span class="sr-only">Soundscape volume</span><input type="range" min="0" max="100" step="1" value="' + level + '" data-ambient-volume aria-label="Soundscape volume"><output>' + level + '%</output></label></div>';
 }
 
 function completedMinutes() {
@@ -499,16 +506,78 @@ function renderCommunity() {
   appShell('<div class="community-layout"><aside class="community-rail"><div class="community-heading"><span class="eyebrow">Mellow Commons</span><h3>Channels</h3></div>' + channelRows + '<div class="rail-divider"></div><div class="community-heading"><h3>Direct messages</h3><button data-view="encouragements">＋</button></div>' + (dmRows || '<p class="empty">Find a student to start a DM.</p>') + '</aside><section class="channel-panel"><header><div><span class="eyebrow">Community channel</span><h1># ' + esc(active ? active.name : "Conversations") + '</h1><p>' + esc(active ? active.description : "Choose a channel") + '</p></div><button class="btn btn-sm" data-view="messages">Private DMs</button></header><div class="channel-scroll">' + (messages || '<div class="empty">Be the first to start a useful conversation.</div>') + '</div>' + (active ? composer : '') + '</section></div>', "Conversations");
 }
 
-function renderBuddies() {
-  const studyModeLabel = function (mode) {
-    return ({ quiet:"Quiet body doubling", "check-ins":"Short check-ins", pomodoro:"Pomodoro blocks", discussion:"Discussion friendly", flexible:"Flexible" })[mode] || "Any style";
+function studyModeLabel(mode) {
+  return ({ quiet:"Quiet body doubling", "check-ins":"Short check-ins", pomodoro:"Pomodoro blocks", discussion:"Discussion friendly", flexible:"Flexible" })[mode] || "Flexible";
+}
+
+function studyPostKind(kind) {
+  return ({
+    group:{ label:"Study group", icon:"👥" },
+    question:{ label:"Question", icon:"❔" },
+    tip:{ label:"Study tip", icon:"💡" }
+  })[kind] || { label:"Study group", icon:"👥" };
+}
+
+function relativeTime(value) {
+  const seconds = Math.max(1, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+  if (seconds < 86400) return Math.floor(seconds / 3600) + "h ago";
+  if (seconds < 604800) return Math.floor(seconds / 86400) + "d ago";
+  return new Date(value).toLocaleDateString([], { month:"short", day:"numeric" });
+}
+
+function studyPostCard(post) {
+  const kind = studyPostKind(post.post_kind);
+  const major = post.major || post.subject || "General studies";
+  const person = {
+    id:post.author_id,
+    display_name:post.author_display_name || "Student",
+    avatar_path:post.author_avatar_path,
+    avatar_color:post.author_avatar_color,
+    profile_frame:post.author_profile_frame,
+    profile_sticker:post.author_profile_sticker
   };
-  const query = state.buddySearch.toLowerCase();
-  const posts = state.buddyPosts.filter(function (post) { return !query || [post.title, post.body, post.subject, post.timezone].join(" ").toLowerCase().includes(query); }).map(function (post) {
-    const person = { id:post.author_id, display_name:post.author_display_name || "Student", avatar_path:post.author_avatar_path, avatar_color:post.author_avatar_color };
-    return '<article class="card buddy-post"><div class="buddy-author"><button data-member-profile="' + esc(post.author_id) + '">' + avatarMarkup(person) + '</button><div><strong>' + esc(person.display_name) + '</strong><small>' + esc(post.subject || "Open to studying together") + '</small></div><time>' + new Date(post.created_at).toLocaleDateString() + '</time></div><h3>' + esc(post.title) + '</h3><p>' + esc(post.body) + '</p><div class="buddy-tags"><span>◷ ' + esc(post.timezone || "Flexible") + '</span><span>◎ ' + esc(studyModeLabel(post.study_mode)) + '</span></div><div class="actions">' + (post.is_own ? '<button class="btn btn-sm" data-close-buddy="' + esc(post.id) + '">Close post</button>' : '<button class="btn btn-primary btn-sm" data-message-member="' + esc(post.author_id) + '">Message</button><button class="btn btn-sm" data-member-profile="' + esc(post.author_id) + '">View profile</button>') + '</div></article>';
+  const groupAction = post.post_kind === "group"
+    ? '<button class="study-join ' + (post.viewer_joined ? 'joined' : '') + '" data-study-join="' + esc(post.id) + '">' + (post.viewer_joined ? '✓ Joined' : '＋ Join group') + '</button>'
+    : '';
+  const ownerAction = post.is_own
+    ? '<button class="study-text-action danger" data-close-buddy="' + esc(post.id) + '">Close</button>'
+    : '';
+  const solved = post.post_kind === "question" && post.solved ? '<span class="study-solved">✓ Solved</span>' : '';
+  return '<article class="study-feed-post"><div class="study-vote"><button class="' + (post.viewer_voted ? 'active' : '') + '" data-study-vote="' + esc(post.id) + '" aria-label="' + (post.viewer_voted ? 'Remove upvote' : 'Upvote post') + '" aria-pressed="' + String(Boolean(post.viewer_voted)) + '">⌃</button><strong>' + Number(post.votes_count || 0) + '</strong></div><div class="study-post-main"><header class="study-post-meta"><button class="study-author" data-member-profile="' + esc(post.author_id) + '">' + avatarMarkup(person) + '<span><strong>' + esc(person.display_name) + '</strong><small>' + esc(major) + ' · ' + esc(relativeTime(post.created_at)) + '</small></span></button><span class="study-kind ' + esc(post.post_kind || 'group') + '">' + kind.icon + ' ' + kind.label + '</span></header><button class="study-post-open" data-study-open="' + esc(post.id) + '"><h3>' + esc(post.title) + '</h3><p>' + esc(post.body) + '</p></button><div class="study-tags"><button data-study-major="' + esc(major) + '"># ' + esc(major) + '</button>' + (post.topic ? '<span># ' + esc(post.topic) + '</span>' : '') + solved + '</div><footer class="study-post-footer"><button data-study-open="' + esc(post.id) + '">💬 ' + Number(post.comments_count || 0) + ' repl' + (Number(post.comments_count || 0) === 1 ? 'y' : 'ies') + '</button>' + (post.post_kind === 'group' ? '<span>● ' + Number(post.members_count || 0) + ' member' + (Number(post.members_count || 0) === 1 ? '' : 's') + '</span><span>◷ ' + esc(post.timezone || 'Flexible') + '</span><span>◎ ' + esc(studyModeLabel(post.study_mode)) + '</span>' : '') + '<div class="study-post-actions">' + groupAction + ownerAction + '</div></footer></div></article>';
+}
+
+function renderBuddies() {
+  const query = state.buddySearch.trim().toLowerCase();
+  const profileMajor = String((state.profile && state.profile.subject) || "").trim();
+  const majors = Array.from(new Set(state.buddyPosts.map(function (post) { return post.major || post.subject || "General studies"; }).filter(Boolean)));
+  if (profileMajor && !majors.some(function (major) { return major.toLowerCase() === profileMajor.toLowerCase(); })) majors.unshift(profileMajor);
+  const topicCounts = state.buddyPosts.reduce(function (counts, post) {
+    const topic = String(post.topic || "").trim();
+    if (topic) counts[topic] = (counts[topic] || 0) + 1;
+    return counts;
+  }, {});
+  const popularTopics = Object.keys(topicCounts).sort(function (a, b) { return topicCounts[b] - topicCounts[a] || a.localeCompare(b); }).slice(0, 7);
+  const filtered = state.buddyPosts.filter(function (post) {
+    const major = post.major || post.subject || "General studies";
+    const matchesMajor = state.buddyMajor === "all" || major.toLowerCase() === state.buddyMajor.toLowerCase();
+    const haystack = [post.title, post.body, major, post.topic, post.timezone, post.study_mode].join(" ").toLowerCase();
+    return matchesMajor && (!query || haystack.includes(query));
+  });
+  const majorChips = ['<button class="' + (state.buddyMajor === 'all' ? 'active' : '') + '" data-study-major="all">All majors</button>'].concat(majors.slice(0, 7).map(function (major) {
+    return '<button class="' + (state.buddyMajor.toLowerCase() === major.toLowerCase() ? 'active' : '') + '" data-study-major="' + esc(major) + '">' + esc(major) + '</button>';
+  })).join("");
+  const topicLinks = popularTopics.map(function (topic) { return '<button data-study-search-topic="' + esc(topic) + '">#' + esc(topic) + '</button>'; }).join("");
+  const posts = filtered.map(studyPostCard).join("");
+  const sortOptions = [["for-you","For you"],["new","New"],["top","Top"],["unanswered","Unanswered"]].map(function (item) {
+    return '<button class="' + (state.buddySort === item[0] ? 'active' : '') + '" data-study-sort="' + item[0] + '">' + item[1] + '</button>';
   }).join("");
-  appShell('<div class="page-head"><div><span class="eyebrow">Accountability, without pressure</span><h1>Find a study buddy</h1><p>Post what you are studying, your timezone, and the kind of support that would help.</p></div><button class="btn btn-primary" data-new-buddy>Create a post</button></div><div class="buddy-search"><input aria-label="Search buddy posts" placeholder="Search subjects, goals, or timezones" value="' + esc(state.buddySearch) + '" data-buddy-search><span>' + state.buddyPosts.length + ' open posts</span></div><div class="buddy-grid">' + (posts || '<div class="card empty">No matching buddy posts yet. Create the first one.</div>') + '</div>', "Study buddies");
+  const profileMajorCard = profileMajor
+    ? '<strong>' + esc(profileMajor) + '</strong><p>Your “For you” feed prioritizes people studying this field.</p><button class="study-aside-link" data-study-major="' + esc(profileMajor) + '">See your major →</button>'
+    : '<strong>Add your field of study</strong><p>Set a subject on your profile to meet students in the same major.</p><button class="study-aside-link" data-view="profile">Update profile →</button>';
+  const content = '<section class="study-hub-hero"><div><span class="eyebrow">Student-powered study network</span><h1>Find your people.</h1><p>Join a study group, ask a specific question, or share the tip that finally made something click.</p></div><div class="study-hero-actions"><button class="btn" data-new-study-kind="question">❔ Ask a question</button><button class="btn btn-primary" data-new-study-kind="group">＋ Create a post</button></div></section><div class="study-major-chips" aria-label="Filter by major">' + majorChips + '</div><div class="study-hub-layout"><section class="study-feed"><div class="study-toolbar"><div class="study-sort" aria-label="Sort study posts">' + sortOptions + '</div><label class="study-search"><span aria-hidden="true">⌕</span><input value="' + esc(state.buddySearch) + '" data-buddy-search aria-label="Search study posts" placeholder="Search majors, topics, or questions"></label></div><div class="study-feed-list">' + (posts || '<div class="card empty study-empty"><span>✦</span><h3>No posts match yet</h3><p>Try another filter or start a useful conversation.</p><button class="btn btn-primary" data-new-study-kind="question">Ask the first question</button></div>') + '</div></section><aside class="study-hub-aside"><section class="card study-aside-card"><span class="eyebrow">Matched to you</span>' + profileMajorCard + '</section><section class="card study-aside-card"><span class="eyebrow">Popular topics</span><div class="study-topic-list">' + (topicLinks || '<p>Topics will appear as students post.</p>') + '</div></section><section class="card study-aside-card study-guide"><span aria-hidden="true">🌱</span><div><strong>Keep it useful</strong><p>Share context, protect your privacy, and upvote answers that helped.</p></div></section></aside></div>';
+  appShell(content, "Study groups");
 }
 
 function renderFeedback() {
@@ -810,7 +879,7 @@ async function loadUserData() {
     supabase.rpc("get_admin_access"),
     supabase.from("community_channels").select("*").eq("active", true).order("sort_order"),
     supabase.rpc("list_feedback_posts", { p_sort:"new", p_category:null, p_search:"", p_limit:100 }),
-    supabase.rpc("list_focus_buddy_posts", { p_subject:"", p_limit:100 }),
+    supabase.rpc("list_study_group_posts", { p_major:"", p_topic:"", p_sort:state.buddySort, p_limit:100 }),
     supabase.rpc("get_focus_room_allowance")
   ]);
   if (results[0].error) showToast(results[0].error.message, true);
@@ -884,27 +953,141 @@ async function voteFeedback(postId) {
   await refreshFeedback(); renderFeedback();
 }
 
-function showBuddyComposer() {
-  showModal("Find a study buddy", '<form class="form" id="buddyForm"><div class="field"><label>Post title</label><input name="title" minlength="4" maxlength="100" required placeholder="Looking for an evening revision buddy"></div><div class="field"><label>What are you working on?</label><input name="subject" maxlength="80" placeholder="Calculus, IELTS, portfolio…"></div><div class="field"><label>About your goal</label><textarea name="body" minlength="10" maxlength="1200" required placeholder="Share your schedule, goal, and the kind of accountability you want."></textarea></div><div class="settings-grid"><div class="field"><label>Timezone</label><input name="timezone" maxlength="60" value="' + esc(Intl.DateTimeFormat().resolvedOptions().timeZone || "") + '"></div><div class="field"><label>Study style</label><select name="study_mode"><option value="quiet">Quiet body doubling</option><option value="check-ins">Short check-ins</option><option value="pomodoro">Pomodoro blocks</option><option value="discussion">Discussion friendly</option><option value="flexible">Flexible</option></select></div></div><button class="btn btn-primary">Publish post</button></form>');
+function showBuddyComposer(initialKind) {
+  const kind = ["group", "question", "tip"].includes(initialKind) ? initialKind : "group";
+  const major = String((state.profile && state.profile.subject) || "");
+  const titles = { group:"Start a study group", question:"Ask the community", tip:"Share a study tip" };
+  showModal(titles[kind], '<form class="form study-post-form" id="buddyForm"><div class="field"><label for="studyPostKind">Post type</label><select id="studyPostKind" name="post_kind"><option value="group"' + (kind === 'group' ? ' selected' : '') + '>👥 Study group</option><option value="question"' + (kind === 'question' ? ' selected' : '') + '>❔ Question</option><option value="tip"' + (kind === 'tip' ? ' selected' : '') + '>💡 Study tip</option></select><small id="studyPostKindHelp">' + (kind === 'group' ? 'Find people with a similar subject, schedule, or study style.' : kind === 'question' ? 'Ask one clear question so students can give useful answers.' : 'Share a practical method, resource, or lesson that worked for you.') + '</small></div><div class="settings-grid"><div class="field"><label for="studyMajor">Major or field</label><input id="studyMajor" name="major" maxlength="80" value="' + esc(major) + '" required placeholder="Computer science, Nursing…"></div><div class="field"><label for="studyTopic">Specific topic <span>optional</span></label><input id="studyTopic" name="topic" maxlength="80" placeholder="Algorithms, anatomy, IELTS…"></div></div><div class="field"><label for="studyPostTitle">Title</label><input id="studyPostTitle" name="title" minlength="4" maxlength="100" required placeholder="' + (kind === 'question' ? 'How do you remember the cranial nerves?' : kind === 'tip' ? 'The flashcard rule that fixed my reviews' : 'Looking for an evening revision group') + '"></div><div class="field"><label for="studyPostBody">Details</label><textarea id="studyPostBody" name="body" minlength="10" maxlength="1200" required placeholder="Add enough context for another student to respond usefully."></textarea><small>Do not share private contact details. You can message safely inside Mellow Commons.</small></div><div class="settings-grid study-group-fields" data-study-group-fields' + (kind === 'group' ? '' : ' hidden') + '><div class="field"><label for="studyTimezone">Timezone</label><input id="studyTimezone" name="timezone" maxlength="60" value="' + esc(Intl.DateTimeFormat().resolvedOptions().timeZone || "") + '"></div><div class="field"><label for="studyMode">Study style</label><select id="studyMode" name="study_mode"><option value="quiet">Quiet body doubling</option><option value="check-ins">Short check-ins</option><option value="pomodoro">Pomodoro blocks</option><option value="discussion">Discussion friendly</option><option value="flexible">Flexible</option></select></div></div><div class="study-compose-footer"><span>Posts are visible to signed-in students.</span><button class="btn btn-primary">Publish post</button></div></form>');
+}
+
+function syncStudyComposer(kind) {
+  const groupFields = document.querySelector("[data-study-group-fields]");
+  const help = document.querySelector("#studyPostKindHelp");
+  const title = document.querySelector("#studyPostTitle");
+  if (groupFields) groupFields.hidden = kind !== "group";
+  if (help) help.textContent = kind === "group" ? "Find people with a similar subject, schedule, or study style." : kind === "question" ? "Ask one clear question so students can give useful answers." : "Share a practical method, resource, or lesson that worked for you.";
+  if (title) title.placeholder = kind === "question" ? "How do you remember the cranial nerves?" : kind === "tip" ? "The flashcard rule that fixed my reviews" : "Looking for an evening revision group";
 }
 
 async function submitBuddy(form) {
   const data = new FormData(form);
-  const result = await supabase.rpc("create_focus_buddy_post", { p_title:String(data.get("title") || "").trim(), p_body:String(data.get("body") || "").trim(), p_subject:String(data.get("subject") || "").trim(), p_timezone:String(data.get("timezone") || "").trim(), p_study_mode:data.get("study_mode") });
+  const result = await supabase.rpc("create_study_group_post", {
+    p_title:String(data.get("title") || "").trim(),
+    p_body:String(data.get("body") || "").trim(),
+    p_major:String(data.get("major") || "").trim(),
+    p_topic:String(data.get("topic") || "").trim(),
+    p_post_kind:String(data.get("post_kind") || "group"),
+    p_timezone:String(data.get("timezone") || "").trim(),
+    p_study_mode:String(data.get("study_mode") || "flexible")
+  });
   if (result.error) return showToast(result.error.message, true);
-  closeModal(); await refreshBuddies(); renderBuddies(); showToast("Buddy post published.");
+  closeModal();
+  await refreshBuddies();
+  renderBuddies();
+  showToast("Your study post is live.");
 }
 
 async function refreshBuddies() {
-  const result = await supabase.rpc("list_focus_buddy_posts", { p_subject:"", p_limit:100 });
-  if (result.error) return showToast(result.error.message, true);
+  const result = await supabase.rpc("list_study_group_posts", { p_major:"", p_topic:"", p_sort:state.buddySort, p_limit:100 });
+  if (result.error) { showToast(result.error.message, true); return false; }
   state.buddyPosts = result.data || [];
+  return true;
+}
+
+function studyCommentMarkup(comment) {
+  const person = {
+    id:comment.author_id,
+    display_name:comment.author_display_name || "Student",
+    avatar_path:comment.author_avatar_path,
+    avatar_color:comment.author_avatar_color,
+    profile_frame:comment.author_profile_frame,
+    profile_sticker:comment.author_profile_sticker
+  };
+  return '<article class="study-comment"><button class="study-comment-avatar" data-member-profile="' + esc(comment.author_id) + '">' + avatarMarkup(person) + '</button><div><header><button data-member-profile="' + esc(comment.author_id) + '">' + esc(person.display_name) + '</button><time>' + esc(relativeTime(comment.created_at)) + '</time>' + (comment.is_own ? '<button class="study-comment-delete" data-delete-study-comment="' + esc(comment.id) + '" aria-label="Delete your reply">Delete</button>' : '') + '</header><p>' + esc(comment.body) + '</p></div></article>';
+}
+
+async function showStudyPost(postId) {
+  const post = state.buddyPosts.find(function (item) { return item.id === postId; });
+  if (!post) return showToast("This study post is no longer available.", true);
+  const result = await supabase.rpc("list_study_post_comments", { p_post_id:postId, p_limit:100 });
+  if (result.error) return showToast(result.error.message, true);
+  state.activeStudyPostId = postId;
+  state.studyComments = result.data || [];
+  const kind = studyPostKind(post.post_kind);
+  const major = post.major || post.subject || "General studies";
+  const person = {
+    id:post.author_id,
+    display_name:post.author_display_name || "Student",
+    avatar_path:post.author_avatar_path,
+    avatar_color:post.author_avatar_color,
+    profile_frame:post.author_profile_frame,
+    profile_sticker:post.author_profile_sticker
+  };
+  const comments = state.studyComments.map(studyCommentMarkup).join("");
+  const solvedAction = post.post_kind === "question" && post.is_own
+    ? '<button class="btn btn-sm" data-study-solved="' + esc(post.id) + '" data-solved="' + String(!post.solved) + '">' + (post.solved ? 'Reopen question' : '✓ Mark solved') + '</button>'
+    : '';
+  const joinAction = post.post_kind === "group"
+    ? '<button class="btn ' + (post.viewer_joined ? '' : 'btn-primary') + '" data-study-join="' + esc(post.id) + '">' + (post.viewer_joined ? '✓ Joined group' : '＋ Join study group') + '</button>'
+    : '';
+  const messageAction = !post.is_own ? '<button class="btn" data-message-member="' + esc(post.author_id) + '">Message ' + esc(person.display_name) + '</button>' : '';
+  const content = '<div class="study-detail" data-study-detail="' + esc(post.id) + '"><header class="study-detail-author"><button data-member-profile="' + esc(post.author_id) + '">' + avatarMarkup(person) + '</button><div><strong>' + esc(person.display_name) + '</strong><span>' + esc(major) + ' · ' + esc(relativeTime(post.created_at)) + '</span></div><span class="study-kind ' + esc(post.post_kind || 'group') + '">' + kind.icon + ' ' + kind.label + '</span></header><div class="study-detail-copy"><div class="study-detail-title"><button class="study-detail-vote ' + (post.viewer_voted ? 'active' : '') + '" data-study-vote="' + esc(post.id) + '" aria-label="Upvote post">⌃ <strong>' + Number(post.votes_count || 0) + '</strong></button><div><h2>' + esc(post.title) + '</h2><div class="study-tags"><span># ' + esc(major) + '</span>' + (post.topic ? '<span># ' + esc(post.topic) + '</span>' : '') + (post.solved ? '<span class="study-solved">✓ Solved</span>' : '') + '</div></div></div><p>' + esc(post.body) + '</p>' + (post.post_kind === 'group' ? '<div class="study-group-facts"><span>● ' + Number(post.members_count || 0) + ' members</span><span>◷ ' + esc(post.timezone || 'Flexible') + '</span><span>◎ ' + esc(studyModeLabel(post.study_mode)) + '</span></div>' : '') + '<div class="study-detail-actions">' + joinAction + messageAction + solvedAction + (post.is_own ? '<button class="btn btn-sm btn-danger" data-close-buddy="' + esc(post.id) + '">Close post</button>' : '') + '</div></div><section class="study-replies"><div class="study-replies-head"><h3>' + Number(post.comments_count || 0) + ' ' + (Number(post.comments_count || 0) === 1 ? 'reply' : 'replies') + '</h3><span>Be helpful and specific.</span></div><div class="study-comment-list">' + (comments || '<div class="study-no-comments">No replies yet. Add the first useful response.</div>') + '</div><form class="study-reply-form" id="studyCommentForm"><input type="hidden" name="post_id" value="' + esc(post.id) + '"><textarea name="body" minlength="2" maxlength="1000" required placeholder="Write a thoughtful reply…" aria-label="Reply to this post"></textarea><button class="btn btn-primary">Reply</button></form></section></div>';
+  showModal(kind.label, content, true);
+}
+
+async function updateStudyPostAndReturn(postId) {
+  if (!await refreshBuddies()) return;
+  if (state.activeStudyPostId === postId && state.buddyPosts.some(function (post) { return post.id === postId; })) await showStudyPost(postId);
+  else {
+    if (state.activeStudyPostId === postId) closeModal();
+    renderBuddies();
+  }
+}
+
+async function voteStudyPost(postId) {
+  const result = await supabase.rpc("toggle_study_post_vote", { p_post_id:postId });
+  if (result.error) return showToast(result.error.message, true);
+  await updateStudyPostAndReturn(postId);
+}
+
+async function toggleStudyMembership(postId) {
+  const result = await supabase.rpc("toggle_study_group_membership", { p_post_id:postId });
+  if (result.error) return showToast(result.error.message, true);
+  await updateStudyPostAndReturn(postId);
+  showToast(result.data ? "You joined the study group." : "You left the study group.");
+}
+
+async function setStudyQuestionSolved(postId, solved) {
+  const result = await supabase.rpc("set_study_question_solved", { p_post_id:postId, p_solved:solved });
+  if (result.error) return showToast(result.error.message, true);
+  await updateStudyPostAndReturn(postId);
+  showToast(solved ? "Question marked as solved." : "Question reopened.");
+}
+
+async function submitStudyComment(form) {
+  const data = new FormData(form);
+  const postId = String(data.get("post_id") || "");
+  const result = await supabase.rpc("create_study_post_comment", { p_post_id:postId, p_body:String(data.get("body") || "").trim() });
+  if (result.error) return showToast(result.error.message, true);
+  form.reset();
+  await updateStudyPostAndReturn(postId);
+}
+
+async function deleteStudyComment(commentId) {
+  const postId = state.activeStudyPostId;
+  const result = await supabase.rpc("delete_study_post_comment", { p_comment_id:commentId });
+  if (result.error) return showToast(result.error.message, true);
+  await updateStudyPostAndReturn(postId);
 }
 
 async function closeBuddy(postId) {
+  const fromDetail = state.activeStudyPostId === postId;
   const result = await supabase.rpc("close_focus_buddy_post", { p_post_id:postId });
   if (result.error) return showToast(result.error.message, true);
-  await refreshBuddies(); renderBuddies(); showToast("Buddy post closed.");
+  if (fromDetail) closeModal();
+  await refreshBuddies();
+  renderBuddies();
+  showToast("Study post closed.");
 }
 
 async function loadAdminData(search) {
@@ -2523,31 +2706,79 @@ function showBlog(id) {
 }
 
 function stopAmbient() {
-  if (state.audio) {
-    try { state.audio.source.stop(); state.audio.context.close(); } catch (e) {}
-    state.audio = null;
-  }
+  if (!state.audio) return;
+  try {
+    if (state.audio.element) {
+      state.audio.element.pause();
+      state.audio.element.removeAttribute("src");
+      state.audio.element.load();
+    }
+    if (state.audio.source) state.audio.source.stop();
+    if (state.audio.context) state.audio.context.close();
+  } catch (error) { /* The sound is already stopped. */ }
+  state.audio = null;
 }
 
-function setAmbient(kind) {
-  stopAmbient(); state.ambient = kind;
-  if (kind !== "none") {
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    const context = new AudioCtx();
-    const seconds = 3;
-    const buffer = context.createBuffer(1, context.sampleRate * seconds, context.sampleRate);
-    const data = buffer.getChannelData(0);
+function setAmbientVolume(value) {
+  state.ambientVolume = Math.min(1, Math.max(0, Number(value) || 0));
+  localStorage.setItem("mellow-ambient-volume", String(state.ambientVolume));
+  if (state.audio && state.audio.element) state.audio.element.volume = state.ambientVolume;
+  if (state.audio && state.audio.gain) state.audio.gain.gain.value = state.ambientVolume * .24;
+  const output = document.querySelector(".ambient-volume output");
+  if (output) output.textContent = Math.round(state.ambientVolume * 100) + "%";
+  const icon = document.querySelector(".ambient-volume > span[aria-hidden]");
+  if (icon) icon.textContent = state.ambientVolume === 0 ? "🔇" : "◖";
+}
+
+function startAmbientFallback(kind) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return false;
+  const context = new AudioCtx();
+  const seconds = 8;
+  const buffer = context.createBuffer(2, context.sampleRate * seconds, context.sampleRate);
+  for (let channel = 0; channel < 2; channel += 1) {
+    const data = buffer.getChannelData(channel);
     let last = 0;
     for (let i = 0; i < data.length; i += 1) {
       const white = Math.random() * 2 - 1;
-      if (kind === "rain") data[i] = white * .22;
-      else if (kind === "cafe") { last = (last + .035 * white) / 1.035; data[i] = last * 3.2; }
-      else { const crack = Math.random() > .998 ? Math.random() * .9 : 0; last = last * .92 + white * .03; data[i] = last + crack; }
+      if (kind === "rain") data[i] = white * .2;
+      else if (kind === "cafe") { last = (last + .028 * white) / 1.028; data[i] = last * 2.8 + white * .018; }
+      else { const crack = Math.random() > .9985 ? Math.random() * .75 : 0; last = last * .94 + white * .025; data[i] = last + crack; }
     }
-    const source = context.createBufferSource(); source.buffer = buffer; source.loop = true;
-    const gain = context.createGain(); gain.gain.value = kind === "rain" ? .15 : .11;
-    source.connect(gain).connect(context.destination); source.start();
-    state.audio = { context:context, source:source };
+  }
+  const source = context.createBufferSource();
+  const gain = context.createGain();
+  source.buffer = buffer;
+  source.loop = true;
+  gain.gain.value = state.ambientVolume * .24;
+  source.connect(gain).connect(context.destination);
+  source.start();
+  state.audio = { context:context, source:source, gain:gain, fallback:true };
+  return true;
+}
+
+function setAmbient(kind) {
+  const next = ["rain", "cafe", "fire"].includes(kind) ? kind : "none";
+  stopAmbient();
+  state.ambient = next;
+  if (next !== "none") {
+    const audio = new Audio();
+    const supportsOgg = Boolean(audio.canPlayType && audio.canPlayType('audio/ogg; codecs="vorbis"'));
+    const extension = supportsOgg ? "ogg" : "m4a";
+    audio.src = "./assets/audio/" + next + "." + extension + "?v=20260930-1";
+    audio.loop = true;
+    audio.preload = "auto";
+    audio.volume = state.ambientVolume;
+    state.audio = { element:audio, kind:next };
+    audio.play().catch(function () {
+      if (!state.audio || state.audio.element !== audio || state.ambient !== next) return;
+      stopAmbient();
+      if (!startAmbientFallback(next)) {
+        state.ambient = "none";
+        showToast("This browser could not start the soundscape. Tap again or check media permissions.", true);
+        if (!document.querySelector(".meeting-page,.social-call-page")) renderApp();
+      }
+    });
   }
   if (!document.querySelector(".meeting-page,.social-call-page")) renderApp();
 }
@@ -2570,7 +2801,16 @@ document.addEventListener("click", async function (event) {
   if (target.dataset.view) { state.view = target.dataset.view; state.mobileNav = false; state.accountMenuOpen = false; state.chatMenuOpen = false; renderApp(); }
   if (target.dataset.channel) { state.activeChannelId = target.dataset.channel; await loadChannelMessages(state.activeChannelId); renderCommunity(); }
   if (target.dataset.channelSlug) { const channel = state.communityChannels.find(function (item) { return item.slug === target.dataset.channelSlug; }); if (channel) { state.activeChannelId = channel.id; state.view = "community"; state.chatMenuOpen = false; await loadChannelMessages(channel.id); renderCommunity(); } }
-  if (target.dataset.newBuddy !== undefined) showBuddyComposer();
+  if (target.dataset.newBuddy !== undefined) showBuddyComposer("group");
+  if (target.dataset.newStudyKind) showBuddyComposer(target.dataset.newStudyKind);
+  if (target.dataset.studyOpen) await showStudyPost(target.dataset.studyOpen);
+  if (target.dataset.studyVote) await voteStudyPost(target.dataset.studyVote);
+  if (target.dataset.studyJoin) await toggleStudyMembership(target.dataset.studyJoin);
+  if (target.dataset.studySolved) await setStudyQuestionSolved(target.dataset.studySolved, target.dataset.solved === "true");
+  if (target.dataset.deleteStudyComment) await deleteStudyComment(target.dataset.deleteStudyComment);
+  if (target.dataset.studySort) { state.buddySort = target.dataset.studySort; await refreshBuddies(); renderBuddies(); }
+  if (target.dataset.studyMajor) { state.buddyMajor = target.dataset.studyMajor; renderBuddies(); }
+  if (target.dataset.studySearchTopic) { state.buddyMajor = "all"; state.buddySearch = target.dataset.studySearchTopic; renderBuddies(); }
   if (target.dataset.closeBuddy) await closeBuddy(target.dataset.closeBuddy);
   if (target.dataset.newFeedback !== undefined) showFeedbackComposer();
   if (target.dataset.feedbackVote) await voteFeedback(target.dataset.feedbackVote);
@@ -2660,11 +2900,22 @@ document.addEventListener("change", async function (event) {
   if (event.target.id === "avatarUpload") { await uploadAvatar(event.target.files && event.target.files[0]); event.target.value = ""; }
   if (event.target.id === "dmMediaInput") { await uploadDmAttachment(event.target.files && event.target.files[0], "image"); event.target.value = ""; }
   if (event.target.dataset.buddySearch !== undefined) { state.buddySearch = event.target.value; renderBuddies(); }
+  if (event.target.id === "studyPostKind") syncStudyComposer(event.target.value);
   if (event.target.dataset.feedbackSearch !== undefined) { state.feedbackSearch = event.target.value; await refreshFeedback(); renderFeedback(); }
 });
 
 document.addEventListener("input", function (event) {
   if (event.target.dataset.messageDraft !== undefined) state.messageDraft = event.target.value;
+  if (event.target.dataset.buddySearch !== undefined) {
+    state.buddySearch = event.target.value;
+    clearTimeout(renderBuddies.searchTimer);
+    renderBuddies.searchTimer = setTimeout(function () {
+      renderBuddies();
+      const search = document.querySelector("[data-buddy-search]");
+      if (search) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
+    }, 180);
+  }
+  if (event.target.dataset.ambientVolume !== undefined) setAmbientVolume(Number(event.target.value) / 100);
 });
 
 document.addEventListener("submit", async function (event) {
@@ -2677,6 +2928,7 @@ document.addEventListener("submit", async function (event) {
   if (form.id === "channelMessageForm") await sendChannelMessage(form);
   if (form.id === "feedbackForm") await submitFeedback(form);
   if (form.id === "buddyForm") await submitBuddy(form);
+  if (form.id === "studyCommentForm") await submitStudyComment(form);
   if (form.id === "meetingDecorForm") saveMeetingDecorations(form);
   if (form.id === "customTimerForm") { const data = new FormData(form); setTimerPreset(data.get("minutes")); closeModal(); showToast("Custom timer set to " + state.timerPreset + " minutes."); }
   if (form.id === "roomDeviceForm") await applyRoomDevices(form);
@@ -2785,7 +3037,8 @@ async function init() {
         if (state.dmChannel) { await supabase.removeChannel(state.dmChannel); state.dmChannel = null; }
         if (state.dmCallChannel) { await supabase.removeChannel(state.dmCallChannel); state.dmCallChannel = null; }
         if (state.communityChannel) { await supabase.removeChannel(state.communityChannel); state.communityChannel = null; }
-        state.profile = null; state.memberProfile = null; state.memberInsights = null; state.conversations = []; state.messages = []; state.dmCalls = []; state.pendingDmCalls = []; state.activeDmCallId = null; state.communityChannels = []; state.channelMessages = []; state.feedbackPosts = []; state.buddyPosts = []; state.admin = null; state.adminStats = null; state.adminMembers = []; state.adminReports = []; state.adminRooms = []; state.view = "home";
+        stopAmbient();
+        state.ambient = "none"; state.profile = null; state.memberProfile = null; state.memberInsights = null; state.conversations = []; state.messages = []; state.dmCalls = []; state.pendingDmCalls = []; state.activeDmCallId = null; state.communityChannels = []; state.channelMessages = []; state.feedbackPosts = []; state.buddyPosts = []; state.studyComments = []; state.activeStudyPostId = null; state.admin = null; state.adminStats = null; state.adminMembers = []; state.adminReports = []; state.adminRooms = []; state.view = "home";
       }
       renderApp();
       if (session) { subscribeToDmCalls(); notifyNextIncomingCall(); }
