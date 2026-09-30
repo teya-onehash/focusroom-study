@@ -4,7 +4,11 @@ Mellow Commons uses authenticated Supabase Edge Functions for Checkout and the b
 
 ## 1. Create recurring Stripe prices
 
-Create these recurring prices in one Stripe account and copy each `price_...` ID:
+Create three Stripe products: **Mellow Commons Basic**, **Mellow Commons Premium**, and **Mellow Commons Buddy**. Premium has monthly and yearly prices; the other products have one monthly price each. This keeps each plan name and entitlement clear on Checkout, receipts, invoices, and the customer portal.
+
+For every paid product, set the Stripe Tax product category to **Software as a service (SaaS) - personal use** (`txcd_10103000`). Mellow Commons is accessed in the browser and nothing is downloaded, so do **not** select **Downloadable Software - personal use** or **SaaS - electronic download - personal use**.
+
+Create these recurring prices in the Stripe account and copy each `price_...` ID:
 
 | Secret | Plan | Price | Interval |
 | --- | --- | ---: | --- |
